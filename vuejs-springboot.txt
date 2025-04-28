@@ -235,3 +235,241 @@ Hello World가 안뜨면
 확정하면 버전에 맞춰 더 정확하게 안내할게.
 정할까?
 
+
+
+
+
+
+
+
+
+
+좋아, Spring Boot 3.3.3 버전에 맞춘 세팅으로 다시 깔끔하게 재정리할게.
+(주의: Spring Boot 3.x는 Java 17 이상 필수야!)
+
+
+---
+
+1단계: Spring Boot 3.3.3 관련 jar 리스트
+
+필수 jar
+
+spring-boot-3.3.3.jar
+
+spring-boot-autoconfigure-3.3.3.jar
+
+spring-boot-starter-web
+
+spring-web-6.1.x.jar
+
+spring-webmvc-6.1.x.jar
+
+spring-context-6.1.x.jar
+
+spring-core-6.1.x.jar
+
+spring-boot-starter
+
+spring-boot-starter-logging
+
+jackson-core-2.17.x.jar
+
+jackson-databind-2.17.x.jar
+
+slf4j-api-2.0.x.jar
+
+logback-classic-1.4.x.jar
+
+logback-core-1.4.x.jar
+
+jakarta.annotation-api-2.1.1.jar (javax → jakarta 변경 주의!)
+
+
+주의할 점
+
+javax.* → jakarta.* 패키지로 변경됨 (JPA, Servlet 모두)
+
+Tomcat 내장서버도 jakarta.servlet 기반으로 작동
+
+Jackson도 2.17.x 버전대를 써야 함
+
+
+
+---
+
+2단계: 관련 jar 웹 다운로드
+
+다운로드 경로 추천
+
+Maven Central Repository
+
+Spring 공식 리포지터리
+
+
+예시 검색 키워드
+
+spring-boot 3.3.3
+
+spring-boot-autoconfigure 3.3.3
+
+spring-web 6.1.6
+
+jackson-databind 2.17.1
+
+slf4j-api 2.0.13
+
+logback-classic 1.4.14
+
+jakarta.annotation-api 2.1.1
+
+
+다운로드할 때 .jar 파일 클릭하고 Assets에서 직접 받으면 돼.
+
+
+---
+
+3단계: libs 폴더 구성
+
+프로젝트에 libs/ 폴더를 만들고 다운로드한 jar를 넣는다.
+필수 jar만 깔끔하게 모아야 한다.
+
+구조 예시:
+
+my-springboot-project/
+ ├─ build.gradle
+ ├─ settings.gradle
+ ├─ libs/
+ │    ├─ spring-boot-3.3.3.jar
+ │    ├─ spring-boot-autoconfigure-3.3.3.jar
+ │    ├─ spring-web-6.1.6.jar
+ │    ├─ spring-webmvc-6.1.6.jar
+ │    ├─ spring-context-6.1.6.jar
+ │    ├─ spring-core-6.1.6.jar
+ │    ├─ jackson-core-2.17.1.jar
+ │    ├─ jackson-databind-2.17.1.jar
+ │    ├─ slf4j-api-2.0.13.jar
+ │    ├─ logback-classic-1.4.14.jar
+ │    ├─ logback-core-1.4.14.jar
+ │    └─ jakarta.annotation-api-2.1.1.jar
+ ├─ src/
+     └─ main/
+         └─ java/
+             └─ com/
+                 └─ example/
+                     └─ demo/
+                         └─ DemoApplication.java
+
+
+---
+
+4단계: build.gradle 설정
+
+plugins {
+    id 'java'
+}
+
+repositories {
+    flatDir {
+        dirs 'libs'
+    }
+}
+
+dependencies {
+    implementation name: 'spring-boot-3.3.3'
+    implementation name: 'spring-boot-autoconfigure-3.3.3'
+    implementation name: 'spring-web-6.1.6'
+    implementation name: 'spring-webmvc-6.1.6'
+    implementation name: 'spring-context-6.1.6'
+    implementation name: 'spring-core-6.1.6'
+    implementation name: 'jackson-core-2.17.1'
+    implementation name: 'jackson-databind-2.17.1'
+    implementation name: 'slf4j-api-2.0.13'
+    implementation name: 'logback-classic-1.4.14'
+    implementation name: 'logback-core-1.4.14'
+    implementation name: 'jakarta.annotation-api-2.1.1'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+settings.gradle은 간단히:
+
+rootProject.name = 'my-springboot-project'
+
+
+---
+
+5단계: Hello World 코드 작성
+
+src/main/java/com/example/demo/DemoApplication.java
+
+package com.example.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@SpringBootApplication
+public class DemoApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(DemoApplication.class, args);
+    }
+
+    @RestController
+    class HelloController {
+        @GetMapping("/")
+        public String hello() {
+            return "Hello World from Spring Boot 3.3.3!";
+        }
+    }
+}
+
+
+---
+
+6단계: 실행하기
+
+빌드
+
+./gradlew build
+
+또는
+
+gradle build
+
+실행
+
+java -cp build/libs/* com.example.demo.DemoApplication
+
+또는 직접 gradle에 application 플러그인 붙여서 bootRun 설정해도 돼.
+
+
+---
+
+요약 정리
+
+
+---
+
+추가 조언
+
+Gradle이 없으면 → gradle init 해서 기본 빌드 스크립트 만들어.
+
+IDE 플러그인 없이 완전 수동 세팅이니까 jar 버전 일관성 무조건 유지해야 해.
+
+권장 방법: 나중에는 이런 수작업 대신 gradle dependencies 선언해서 자동 다운로드 추천. (초기 경험용이라면 수작업도 좋아)
+
+
+
+---
+
+질문
+혹시 build.gradle을 좀 더 자동화해서,
+"libs 폴더에 있는 모든 jar 자동 import"
+형태로 하고 싶어?
+(이것도 바로 적용해줄 수 있어)
+원해?
+
