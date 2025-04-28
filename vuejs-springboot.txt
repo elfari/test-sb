@@ -1,0 +1,237 @@
+좋아. 네가 하고자 하는 걸 하나씩 깔끔하게 풀어서 정리해줄게.
+목표는 VSCode에 Spring Boot 프로젝트를 "수작업으로" 세팅해서 Hello World까지 띄우는 거 맞지?
+자, 심호흡하고 단계별로 가보자.
+
+
+---
+
+1단계: Spring Boot 관련 기본 jar 나열
+
+Spring Boot 기본 구동을 위해 필요한 최소 jar는 다음이야.
+
+spring-boot-2.x.x.RELEASE.jar (코어 부트스트랩)
+
+spring-boot-autoconfigure-2.x.x.RELEASE.jar (자동설정 기능)
+
+spring-boot-starter-web (Spring MVC, Tomcat 내장)
+
+spring-web-5.x.x.RELEASE.jar
+
+spring-webmvc-5.x.x.RELEASE.jar
+
+spring-context-5.x.x.RELEASE.jar
+
+spring-core-5.x.x.RELEASE.jar
+
+spring-boot-starter-logging (로깅)
+
+spring-boot-starter (기본 스타터)
+
+jackson-core / jackson-databind (JSON 처리)
+
+
+부수적으로 필요한 것들
+
+slf4j-api.jar
+
+logback-classic.jar
+
+logback-core.jar
+
+javax.annotation-api.jar
+
+
+주의할 점: 버전끼리 맞춰야 돼. 예를 들어 Spring Boot 2.7.15를 쓴다면 전부 2.7.15 기반에 맞아야 해.
+
+
+---
+
+2단계: 관련 jar를 웹에서 다운로드
+
+추천 사이트
+
+Maven Central Repository
+
+Spring Releases
+
+
+다운로드 방법
+
+1. Maven Central에 접속
+
+
+2. 예를 들어 spring-boot-2.7.15 검색
+
+
+3. jar 파일 클릭 → Assets → .jar 파일 다운로드
+
+
+
+팁:
+spring-boot-starter-web 같은 스타터는 의존성 목록만 담고 있고, 실제 jar는 다른 라이브러리들이야.
+그래서 가능하면 "spring-boot-dependencies" BOM을 참고하거나, gradle 의존성 정보를 보고 개별 다운로드 하는 게 정확해.
+
+
+---
+
+3단계: 다운로드한 jar를 gradle 프로젝트의 lib 폴더에 넣기
+
+1. VSCode에서 새 폴더 만들기: libs
+
+
+2. 아까 다운받은 .jar 파일을 전부 libs 폴더 안에 넣기
+
+
+
+폴더 구조 예시
+
+my-springboot-project/
+ ├─ build.gradle
+ ├─ settings.gradle
+ ├─ libs/
+ │    ├─ spring-boot-2.7.15.jar
+ │    ├─ spring-boot-autoconfigure-2.7.15.jar
+ │    ├─ spring-web-5.3.26.jar
+ │    └─ ...
+ ├─ src/
+     └─ main/
+         └─ java/
+             └─ com/
+                 └─ example/
+                     └─ demo/
+                         └─ DemoApplication.java
+
+
+---
+
+4단계: Gradle로 빌드 준비
+
+build.gradle 파일 예시
+
+plugins {
+    id 'java'
+}
+
+repositories {
+    flatDir {
+        dirs 'libs'  // libs 폴더에서 직접 jar 찾게 설정
+    }
+}
+
+dependencies {
+    implementation name: 'spring-boot-2.7.15'
+    implementation name: 'spring-boot-autoconfigure-2.7.15'
+    implementation name: 'spring-web-5.3.26'
+    implementation name: 'spring-webmvc-5.3.26'
+    implementation name: 'spring-context-5.3.26'
+    implementation name: 'spring-core-5.3.26'
+    implementation name: 'spring-boot-starter'
+    implementation name: 'spring-boot-starter-logging'
+    implementation name: 'jackson-core-2.13.4'
+    implementation name: 'jackson-databind-2.13.4'
+    implementation name: 'slf4j-api-1.7.36'
+    implementation name: 'logback-classic-1.2.11'
+    implementation name: 'logback-core-1.2.11'
+    implementation name: 'javax.annotation-api-1.3.2'
+}
+
+그리고 settings.gradle은 아주 심플하게
+
+rootProject.name = 'my-springboot-project'
+
+빌드 명령어
+
+./gradlew build
+
+또는 Windows면
+
+gradlew.bat build
+
+처음에는 gradlew 파일이 없을 거야.
+gradle init 명령으로 기본 파일을 세팅하거나, 그냥 gradle build를 사용해도 돼.
+
+
+---
+
+5단계: Hello World 작성
+
+src/main/java/com/example/demo/DemoApplication.java
+
+package com.example.demo;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@SpringBootApplication
+public class DemoApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(DemoApplication.class, args);
+    }
+
+    @RestController
+    class HelloController {
+        @GetMapping("/")
+        public String hello() {
+            return "Hello World!";
+        }
+    }
+}
+
+
+---
+
+추가: 실행 방법
+
+빌드가 끝났다면, 실행은 이렇게 하면 돼.
+
+./gradlew bootRun
+
+또는 직접 메인 클래스 실행
+
+java -cp build/libs/* com.example.demo.DemoApplication
+
+
+---
+
+요약 흐름
+
+1. 필요한 Spring Boot jar 파일 리스트 작성
+
+
+2. Maven Central에서 직접 다운로드
+
+
+3. 프로젝트에 libs/ 폴더 만들고 넣기
+
+
+4. build.gradle로 수동 의존성 연결
+
+
+5. gradle build → bootRun 또는 직접 java -cp 실행
+
+
+6. Hello World 코드 작성 후 브라우저에서 http://localhost:8080 확인
+
+
+
+
+---
+
+혹시 여기서
+
+bootRun이 에러난다거나
+
+jar 경로를 못찾는다거나
+
+Hello World가 안뜨면
+
+
+그 부분 디테일 잡아주는 추가 가이드도 해줄게.
+
+혹시 Spring Boot 버전이나 Java 버전을 몇으로 설정할지 정할까?
+(ex: Spring Boot 2.7.15 + Java 11)
+확정하면 버전에 맞춰 더 정확하게 안내할게.
+정할까?
+
