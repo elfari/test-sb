@@ -1,0 +1,165 @@
+내부 폐쇄망 환경에서 인터넷 없이도 OCR 프로그램을 구축할 수 있도록, 필요한 모든 구성 요소를 오프라인에서 설치하고 실행하는 방법을 단계별로 안내하겠습니다.
+
+
+---
+
+1단계: 오프라인 설치 파일 준비 (인터넷 가능한 PC에서 진행)
+
+1.1. 필수 Python 패키지 다운로드
+
+인터넷이 가능한 PC에서 다음 패키지의 .whl 파일을 다운로드합니다:
+
+Pillow: 이미지 처리 라이브러리
+
+다운로드: Pillow - PyPI
+
+
+pytesseract: Tesseract OCR을 위한 Python 래퍼
+
+다운로드: pytesseract - PyPI
+
+
+pyinstaller: Python 스크립트를 실행 파일로 변환
+
+다운로드: PyInstaller - PyPI
+
+
+
+각 패키지의 페이지에서 "Download files" 섹션으로 이동하여, 사용 중인 Python 버전과 운영 체제에 맞는 .whl 파일을 선택하여 다운로드합니다.
+
+1.2. Tesseract OCR 엔진 설치 파일 다운로드
+
+Windows용 Tesseract OCR 설치 파일을 다운로드합니다:
+
+다운로드: Tesseract OCR for Windows
+
+
+설치 파일을 USB 드라이브나 외부 저장 매체에 저장합니다.
+
+
+---
+
+2단계: 오프라인 환경에서 설치 및 구성
+
+2.1. Tesseract OCR 엔진 설치
+
+1. 다운로드한 Tesseract 설치 파일을 실행하여 설치합니다.
+
+
+2. 설치 경로를 확인하고, 해당 경로를 환경 변수에 추가합니다:
+
+예: C:\Program Files\Tesseract-OCR
+
+
+
+
+2.2. Python 패키지 설치
+
+1. 다운로드한 .whl 파일들을 오프라인 PC의 한 폴더에 모읍니다.
+
+
+2. 명령 프롬프트를 열고 해당 폴더로 이동합니다.
+
+
+3. 다음 명령어를 사용하여 패키지를 설치합니다:
+
+
+
+pip install --no-index --find-links=. pillow-*.whl
+pip install --no-index --find-links=. pytesseract-*.whl
+pip install --no-index --find-links=. pyinstaller-*.whl
+
+이 명령어는 현재 디렉토리에서 패키지를 찾아 설치합니다.
+
+
+---
+
+3단계: OCR 프로그램 구현
+
+아래는 간단한 OCR 프로그램의 예제 코드입니다. 이 코드를 ocr_app.py로 저장합니다.
+
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image
+import pytesseract
+import os
+
+# Tesseract OCR 설치 경로 설정
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+class OCRApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("OCR 프로그램")
+        self.root.geometry("600x400")
+
+        self.file_path = ''
+
+        self.btn_select = tk.Button(root, text="이미지 선택", command=self.select_file)
+        self.btn_select.pack(pady=10)
+
+        self.btn_run = tk.Button(root, text="텍스트 추출", command=self.run_ocr)
+        self.btn_run.pack(pady=10)
+
+        self.text_result = tk.Text(root, wrap=tk.WORD)
+        self.text_result.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+
+        self.btn_copy = tk.Button(root, text="텍스트 복사", command=self.copy_result)
+        self.btn_copy.pack(pady=10)
+
+    def select_file(self):
+        self.file_path = filedialog.askopenfilename(filetypes=[
+            ("이미지 파일", "*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tiff"),
+            ("모든 파일", "*.*")
+        ])
+        if self.file_path:
+            messagebox.showinfo("파일 선택됨", f"선택된 파일:\n{self.file_path}")
+
+    def run_ocr(self):
+        if not self.file_path:
+            messagebox.showwarning("파일 없음", "이미지 파일을 선택하세요.")
+            return
+        try:
+            image = Image.open(self.file_path)
+            text = pytesseract.image_to_string(image, lang='kor+eng')
+            self.text_result.delete(1.0, tk.END)
+            self.text_result.insert(tk.END, text)
+        except Exception as e:
+            messagebox.showerror("오류 발생", str(e))
+
+    def copy_result(self):
+        result = self.text_result.get(1.0, tk.END)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(result)
+        messagebox.showinfo("복사 완료", "텍스트가 클립보드에 복사되었습니다.")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = OCRApp(root)
+    root.mainloop()
+
+
+---
+
+4단계: 실행 파일로 변환 (선택 사항)
+
+프로그램을 독립 실행형 .exe 파일로 만들려면 다음 단계를 따릅니다:
+
+1. 명령 프롬프트를 열고 ocr_app.py가 있는 디렉토리로 이동합니다.
+
+
+2. 다음 명령어를 실행합니다:
+
+
+
+pyinstaller --onefile --windowed ocr_app.py
+
+3. dist 폴더 내에 생성된 ocr_app.exe 파일을 실행하여 프로그램을 사용합니다.
+
+
+
+
+---
+
+이 과정을 통해 인터넷 연결 없이도 OCR 프로그램을 구축하고 실행할 수 있습니다. 추가적인 기능이나 개선 사항이 필요하다면 언제든지 말씀해 주세요.
+
