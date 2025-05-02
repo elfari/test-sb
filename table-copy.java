@@ -118,4 +118,16 @@ public class DBDataCopier {
         sb.append(")");
         return sb.toString();
     }
+
+private static String joinStrings(List<String> list, String delimiter) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < list.size(); i++) {
+        sb.append(list.get(i));
+        if (i < list.size() - 1) {
+            sb.append(delimiter);
+        }
+    }
+    return sb.toString();
+}
+
 }
