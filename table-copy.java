@@ -1,102 +1,121 @@
-import java.io.*;
 import java.sql.*;
 import java.util.*;
+import java.io.*;
 
-public class OracleDataCopier {
+public class DBDataCopier {
 
-    // Oracle DB 접속 정보
-    private static final String SOURCE_URL = "jdbc:oracle:thin:@//source_host:1521/SOURCE_SID";
-    private static final String SOURCE_USER = "source_user";
-    private static final String SOURCE_PASS = "source_password";
+    private static final String DB_A_URL = "jdbc:oracle:thin:@A_HOST:1521:A_SID";
+    private static final String DB_A_USER = "SOURCE_USER";
+    private static final String DB_A_PASS = "SOURCE_PASS";
 
-    private static final String TARGET_URL = "jdbc:oracle:thin:@//target_host:1521/TARGET_SID";
-    private static final String TARGET_USER = "target_user";
-    private static final String TARGET_PASS = "target_password";
+    private static final String DB_B_URL = "jdbc:oracle:thin:@B_HOST:1521:B_SID";
+    private static final String DB_B_USER = "TARGET_USER";
+    private static final String DB_B_PASS = "TARGET_PASS";
 
     public static void main(String[] args) throws Exception {
-        List<String> tables = readTablesFromFile("tables.txt");
+        List<String> tables = loadTableList("tables.txt");
 
-        try (
-            Connection sourceConn = DriverManager.getConnection(SOURCE_URL, SOURCE_USER, SOURCE_PASS);
-            Connection targetConn = DriverManager.getConnection(TARGET_URL, TARGET_USER, TARGET_PASS)
-        ) {
-            sourceConn.setAutoCommit(false);
-            targetConn.setAutoCommit(false);
+        Class.forName("oracle.jdbc.driver.OracleDriver");
 
-            for (String table : tables) {
-                copyTableData(sourceConn, targetConn, table.trim().toUpperCase());
+        Connection connA = DriverManager.getConnection(DB_A_URL, DB_A_USER, DB_A_PASS);
+        Connection connB = DriverManager.getConnection(DB_B_URL, DB_B_USER, DB_B_PASS);
+
+        connB.setAutoCommit(false);
+
+        for (String table : tables) {
+            try {
+                copyTable(connA, connB, table);
+                connB.commit();
                 System.out.println(table + " : 복사완료");
+            } catch (Exception e) {
+                connB.rollback();
+                System.err.println(table + " : 복사실패 - " + e.getMessage());
             }
         }
+
+        connA.close();
+        connB.close();
     }
 
-    private static List<String> readTablesFromFile(String filename) throws IOException {
-        List<String> tables = new ArrayList<>();
-        try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                if (!line.trim().isEmpty()) {
-                    tables.add(line.trim());
-                }
+    private static List<String> loadTableList(String filePath) throws IOException {
+        List<String> tables = new ArrayList<String>();
+        BufferedReader reader = new BufferedReader(new FileReader(filePath));
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (!line.trim().isEmpty()) {
+                tables.add(line.trim());
             }
         }
+        reader.close();
         return tables;
     }
 
-    private static void copyTableData(Connection sourceConn, Connection targetConn, String tableName) throws SQLException {
-        List<String> commonColumns = getCommonColumns(sourceConn, targetConn, tableName);
-        if (commonColumns.isEmpty()) return;
+    private static void copyTable(Connection connA, Connection connB, String tableName) throws Exception {
+        List<String> sourceCols = getColumnList(connA, tableName);
+        List<String> targetCols = getColumnList(connB, tableName);
 
-        String columns = String.join(",", commonColumns);
-        String selectSQL = "SELECT " + columns + " FROM " + tableName;
-        String insertSQL = buildInsertSQL(tableName, commonColumns);
-
-        try (
-            PreparedStatement selectStmt = sourceConn.prepareStatement(selectSQL);
-            ResultSet rs = selectStmt.executeQuery();
-            PreparedStatement insertStmt = targetConn.prepareStatement(insertSQL)
-        ) {
-            int batchSize = 0;
-
-            while (rs.next()) {
-                for (int i = 0; i < commonColumns.size(); i++) {
-                    insertStmt.setObject(i + 1, rs.getObject(commonColumns.get(i)));
-                }
-                insertStmt.addBatch();
-                batchSize++;
-
-                if (batchSize % 1000 == 0) {
-                    insertStmt.executeBatch();
-                    targetConn.commit();
-                }
-            }
-
-            insertStmt.executeBatch();
-            targetConn.commit();
-        }
-    }
-
-    private static List<String> getCommonColumns(Connection sourceConn, Connection targetConn, String tableName) throws SQLException {
-        Set<String> sourceCols = getColumnNames(sourceConn, tableName);
-        Set<String> targetCols = getColumnNames(targetConn, tableName);
-        sourceCols.retainAll(targetCols); // intersection
-        return new ArrayList<>(sourceCols);
-    }
-
-    private static Set<String> getColumnNames(Connection conn, String tableName) throws SQLException {
-        Set<String> columns = new HashSet<>();
-        DatabaseMetaData metaData = conn.getMetaData();
-        try (ResultSet rs = metaData.getColumns(null, conn.getSchema(), tableName, null)) {
-            while (rs.next()) {
-                columns.add(rs.getString("COLUMN_NAME"));
+        List<String> commonCols = new ArrayList<String>();
+        for (String col : sourceCols) {
+            if (targetCols.contains(col)) {
+                commonCols.add(col);
             }
         }
-        return columns;
+
+        if (commonCols.isEmpty()) {
+            throw new Exception("일치하는 컬럼 없음");
+        }
+
+        String colList = String.join(", ", commonCols);
+        String selectSql = "SELECT " + colList + " FROM " + tableName;
+        String insertSql = buildInsertSQL(tableName, commonCols);
+
+        PreparedStatement pstmtInsert = connB.prepareStatement(insertSql);
+        Statement stmtSelect = connA.createStatement();
+        stmtSelect.setFetchSize(500);
+
+        ResultSet rs = stmtSelect.executeQuery(selectSql);
+        int colCount = commonCols.size();
+
+        int count = 0;
+        while (rs.next()) {
+            for (int i = 1; i <= colCount; i++) {
+                pstmtInsert.setObject(i, rs.getObject(i));
+            }
+            pstmtInsert.addBatch();
+            count++;
+
+            if (count % 1000 == 0) {
+                pstmtInsert.executeBatch();
+            }
+        }
+        pstmtInsert.executeBatch();
+
+        rs.close();
+        stmtSelect.close();
+        pstmtInsert.close();
     }
 
-    private static String buildInsertSQL(String tableName, List<String> columns) {
-        String cols = String.join(",", columns);
-        String placeholders = String.join(",", Collections.nCopies(columns.size(), "?"));
-        return "INSERT INTO " + tableName + " (" + cols + ") VALUES (" + placeholders + ")";
+    private static List<String> getColumnList(Connection conn, String tableName) throws SQLException {
+        List<String> cols = new ArrayList<String>();
+        DatabaseMetaData meta = conn.getMetaData();
+        ResultSet rs = meta.getColumns(null, conn.getSchema(), tableName.toUpperCase(), null);
+        while (rs.next()) {
+            cols.add(rs.getString("COLUMN_NAME"));
+        }
+        rs.close();
+        return cols;
+    }
+
+    private static String buildInsertSQL(String table, List<String> cols) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("INSERT INTO ").append(table).append(" (");
+        sb.append(String.join(", ", cols));
+        sb.append(") VALUES (");
+        for (int i = 0; i < cols.size(); i++) {
+            sb.append("?");
+            if (i < cols.size() - 1) sb.append(", ");
+        }
+        sb.append(")");
+        return sb.toString();
     }
 }
