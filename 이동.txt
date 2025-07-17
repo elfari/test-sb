@@ -1,78 +1,75 @@
-CREATE OR REPLACE FUNCTION FN_SMART_SIMILARITY(
+CREATE OR REPLACE FUNCTION FN_SMART_SIMILARITY_SORT(
     str1 IN VARCHAR2,
     str2 IN VARCHAR2
 ) RETURN NUMBER
 IS
+    -- 정규화
+    FUNCTION F_NORMALIZE(s VARCHAR2) RETURN VARCHAR2 IS
+    BEGIN
+        RETURN LOWER(REGEXP_REPLACE(s, '[^A-Za-z0-9]', ''));
+    END;
+
+    -- 문자열 정렬
+    FUNCTION F_SORT_STR(s VARCHAR2) RETURN VARCHAR2 IS
+        arr DBMS_SQL.VARCHAR2_TABLE;
+        i INTEGER;
+        sorted VARCHAR2(4000) := '';
+    BEGIN
+        FOR i IN 1..LENGTH(s) LOOP
+            arr(i) := SUBSTR(s, i, 1);
+        END LOOP;
+        -- 오라클 PL/SQL에는 배열 정렬이 없으므로, SQL로 정렬
+        FOR rec IN (
+            SELECT COLUMN_VALUE AS ch
+            FROM TABLE(arr)
+            ORDER BY COLUMN_VALUE
+        ) LOOP
+            sorted := sorted || rec.ch;
+        END LOOP;
+        RETURN sorted;
+    END;
+
     norm1 VARCHAR2(4000);
     norm2 VARCHAR2(4000);
-    set1  VARCHAR2(4000) := '';
-    set2  VARCHAR2(4000) := '';
-    union_set VARCHAR2(4000) := '';
-    inter_count INTEGER := 0;
-    i INTEGER;
-    c CHAR(1);
-    jac_sim NUMBER;
-    lev_sim NUMBER;
-    len_max NUMBER;
-    dist NUMBER;
-    result NUMBER;
+    sort1 VARCHAR2(4000);
+    sort2 VARCHAR2(4000);
+    dist_orig NUMBER;
+    dist_sort NUMBER;
+    len_max_orig NUMBER;
+    len_max_sort NUMBER;
+    sim_orig NUMBER;
+    sim_sort NUMBER;
+    final_sim NUMBER;
 BEGIN
-    -- 1. 정규화(소문자, 특수문자/공백 제거)
-    norm1 := LOWER(REGEXP_REPLACE(str1, '[^A-Za-z0-9]', ''));
-    norm2 := LOWER(REGEXP_REPLACE(str2, '[^A-Za-z0-9]', ''));
+    norm1 := F_NORMALIZE(str1);
+    norm2 := F_NORMALIZE(str2);
 
-    -- 2. 문자 집합 생성(set1, set2)
-    FOR i IN 1..LENGTH(norm1) LOOP
-        c := SUBSTR(norm1, i, 1);
-        IF INSTR(set1, c) = 0 THEN
-            set1 := set1 || c;
-        END IF;
-    END LOOP;
-    FOR i IN 1..LENGTH(norm2) LOOP
-        c := SUBSTR(norm2, i, 1);
-        IF INSTR(set2, c) = 0 THEN
-            set2 := set2 || c;
-        END IF;
-    END LOOP;
+    sort1 := F_SORT_STR(norm1);
+    sort2 := F_SORT_STR(norm2);
 
-    -- 3. 문자 집합 교집합, 합집합
-    FOR i IN 1..LENGTH(set1) LOOP
-        c := SUBSTR(set1, i, 1);
-        IF INSTR(set2, c) > 0 THEN
-            inter_count := inter_count + 1;
-        END IF;
-        IF INSTR(union_set, c) = 0 THEN
-            union_set := union_set || c;
-        END IF;
-    END LOOP;
-    FOR i IN 1..LENGTH(set2) LOOP
-        c := SUBSTR(set2, i, 1);
-        IF INSTR(union_set, c) = 0 THEN
-            union_set := union_set || c;
-        END IF;
-    END LOOP;
-
-    IF LENGTH(union_set) = 0 THEN
-        jac_sim := 1; -- 둘 다 비어있으면 100% 유사
+    -- 원본 Levenshtein
+    len_max_orig := GREATEST(LENGTH(norm1), LENGTH(norm2));
+    IF len_max_orig = 0 THEN
+        sim_orig := 1;
     ELSE
-        jac_sim := inter_count / LENGTH(union_set); -- 0~1
+        dist_orig := UTL_MATCH.EDIT_DISTANCE(norm1, norm2);
+        sim_orig := 1 - dist_orig / len_max_orig;
+        IF sim_orig < 0 THEN sim_orig := 0; END IF;
     END IF;
 
-    -- 4. Levenshtein(편집거리) 유사도
-    len_max := GREATEST(LENGTH(norm1), LENGTH(norm2));
-    IF len_max = 0 THEN
-        lev_sim := 1;
+    -- 정렬 Levenshtein (문자 집합/순서 무시)
+    len_max_sort := GREATEST(LENGTH(sort1), LENGTH(sort2));
+    IF len_max_sort = 0 THEN
+        sim_sort := 1;
     ELSE
-        dist := UTL_MATCH.EDIT_DISTANCE(norm1, norm2);
-        lev_sim := 1 - dist / len_max; -- 0~1
-        IF lev_sim < 0 THEN
-            lev_sim := 0;
-        END IF;
+        dist_sort := UTL_MATCH.EDIT_DISTANCE(sort1, sort2);
+        sim_sort := 1 - dist_sort / len_max_sort;
+        IF sim_sort < 0 THEN sim_sort := 0; END IF;
     END IF;
 
-    -- 5. 최종 유사도 (가중치: 집합 0.7, 순서 0.3)
-    result := jac_sim * 0.7 + lev_sim * 0.3;
+    -- 가중치 조합 (정렬 0.7 + 원본 0.3)
+    final_sim := sim_sort * 0.7 + sim_orig * 0.3;
 
-    RETURN ROUND(result * 100, 2); -- 퍼센트(0~100)
+    RETURN ROUND(final_sim * 100, 2);
 END;
 /
