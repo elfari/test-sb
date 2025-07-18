@@ -73,3 +73,32 @@ BEGIN
     RETURN ROUND(final_sim * 100, 2);
 END;
 /
+
+
+CREATE OR REPLACE FUNCTION remove_dup_tokens(str IN VARCHAR2)
+RETURN VARCHAR2
+IS
+    v_token VARCHAR2(100);
+    v_result VARCHAR2(4000);
+BEGIN
+    -- 정규식으로 공백, 하이픈 기준 토큰 추출
+    FOR rec IN (
+        SELECT REGEXP_SUBSTR(str, '[^ -]+', 1, LEVEL) AS token
+        FROM dual
+        CONNECT BY REGEXP_SUBSTR(str, '[^ -]+', 1, LEVEL) IS NOT NULL
+    )
+    LOOP
+        -- 이미 결과에 토큰이 없으면 추가
+        IF INSTR(' ' || v_result || ' ', ' ' || rec.token || ' ') = 0 THEN
+            IF v_result IS NULL THEN
+                v_result := rec.token;
+            ELSE
+                v_result := v_result || ' ' || rec.token;
+            END IF;
+        END IF;
+    END LOOP;
+    RETURN v_result;
+END;
+/
+
+
