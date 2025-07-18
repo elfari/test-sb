@@ -3,6 +3,34 @@ CREATE OR REPLACE FUNCTION FN_SMART_SIMILARITY_SORT(
     str2 IN VARCHAR2
 ) RETURN NUMBER
 IS
+
+-- 중복단어 제거
+FUNCTION remove_dup_tokens(str IN VARCHAR2)
+RETURN VARCHAR2
+IS
+    v_token VARCHAR2(100);
+    v_result VARCHAR2(4000);
+BEGIN
+    -- 정규식으로 공백, 하이픈 기준 토큰 추출
+    FOR rec IN (
+        SELECT REGEXP_SUBSTR(str, '[^ -]+', 1, LEVEL) AS token
+        FROM dual
+        CONNECT BY REGEXP_SUBSTR(str, '[^ -]+', 1, LEVEL) IS NOT NULL
+    )
+    LOOP
+        -- 이미 결과에 토큰이 없으면 추가
+        IF INSTR(' ' || v_result || ' ', ' ' || rec.token || ' ') = 0 THEN
+            IF v_result IS NULL THEN
+                v_result := rec.token;
+            ELSE
+                v_result := v_result || ' ' || rec.token;
+            END IF;
+        END IF;
+    END LOOP;
+    RETURN v_result;
+END;
+
+
     -- 정규화
     FUNCTION F_NORMALIZE(s VARCHAR2) RETURN VARCHAR2 IS
     BEGIN
@@ -29,6 +57,9 @@ IS
         RETURN sorted;
     END;
 
+
+ndup1 VARCHAR2(4000);
+    ndup2 VARCHAR2(4000);
     norm1 VARCHAR2(4000);
     norm2 VARCHAR2(4000);
     sort1 VARCHAR2(4000);
@@ -41,8 +72,12 @@ IS
     sim_sort NUMBER;
     final_sim NUMBER;
 BEGIN
-    norm1 := F_NORMALIZE(str1);
-    norm2 := F_NORMALIZE(str2);
+
+ndup1 := remove_dup_tokens(str1);
+    ndup2 := remove_dup_tokens(str2);
+
+    norm1 := F_NORMALIZE(ndup1);
+    norm2 := F_NORMALIZE(ndup2);
 
     sort1 := F_SORT_STR(norm1);
     sort2 := F_SORT_STR(norm2);
@@ -75,30 +110,5 @@ END;
 /
 
 
-CREATE OR REPLACE FUNCTION remove_dup_tokens(str IN VARCHAR2)
-RETURN VARCHAR2
-IS
-    v_token VARCHAR2(100);
-    v_result VARCHAR2(4000);
-BEGIN
-    -- 정규식으로 공백, 하이픈 기준 토큰 추출
-    FOR rec IN (
-        SELECT REGEXP_SUBSTR(str, '[^ -]+', 1, LEVEL) AS token
-        FROM dual
-        CONNECT BY REGEXP_SUBSTR(str, '[^ -]+', 1, LEVEL) IS NOT NULL
-    )
-    LOOP
-        -- 이미 결과에 토큰이 없으면 추가
-        IF INSTR(' ' || v_result || ' ', ' ' || rec.token || ' ') = 0 THEN
-            IF v_result IS NULL THEN
-                v_result := rec.token;
-            ELSE
-                v_result := v_result || ' ' || rec.token;
-            END IF;
-        END IF;
-    END LOOP;
-    RETURN v_result;
-END;
-/
 
 
