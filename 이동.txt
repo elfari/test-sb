@@ -1,114 +1,109 @@
-CREATE OR REPLACE FUNCTION FN_SMART_SIMILARITY_SORT(
-    str1 IN VARCHAR2,
-    str2 IN VARCHAR2
+------------------------------------------------------------------------------
+--  자재명 유사도 함수  (Oracle 12c 이상)  
+--  · 토큰 분리  : 공백 / 콤마(,) / 세미콜론(;)  
+--  · 중복 제거  : O (대소문자 무시)  
+--  · 유사도     : Jaccard ×100 (%)  
+--    └ 토큰 집합 동일   → 99 %  
+--    └ 집합·순서 모두 동일 → 100 %
+------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_material_similarity
+(
+    p_existing IN VARCHAR2,   -- 기존 자재명
+    p_input    IN VARCHAR2    -- 신규 입력 자재명
 ) RETURN NUMBER
+DETERMINISTIC
 IS
+    ------------------------------------------------------------------
+    -- 지역 컬렉션 타입  
+    ------------------------------------------------------------------
+    TYPE t_set  IS TABLE OF BOOLEAN       INDEX BY VARCHAR2(4000); -- 집합
+    TYPE t_list IS TABLE OF VARCHAR2(4000)INDEX BY PLS_INTEGER;    -- 순서
+    ------------------------------------------------------------------
+    -- 변수 선언
+    ------------------------------------------------------------------
+    v_set1   t_set;
+    v_set2   t_set;
+    v_list1  t_list;
+    v_list2  t_list;
+    v_cnt1   PLS_INTEGER;
+    v_cnt2   PLS_INTEGER;
 
--- 중복단어 제거
-FUNCTION remove_dup_tokens(str IN VARCHAR2)
-RETURN VARCHAR2
-IS
-    v_token VARCHAR2(100);
-    v_result VARCHAR2(4000);
-BEGIN
-    -- 정규식으로 공백, 하이픈 기준 토큰 추출
-    FOR rec IN (
-        SELECT REGEXP_SUBSTR(str, '[^ -]+', 1, LEVEL) AS token
-        FROM dual
-        CONNECT BY REGEXP_SUBSTR(str, '[^ -]+', 1, LEVEL) IS NOT NULL
-    )
-    LOOP
-        -- 이미 결과에 토큰이 없으면 추가
-        IF INSTR(' ' || v_result || ' ', ' ' || rec.token || ' ') = 0 THEN
-            IF v_result IS NULL THEN
-                v_result := rec.token;
-            ELSE
-                v_result := v_result || ' ' || rec.token;
+    v_union  PLS_INTEGER := 0;   -- |A∪B|
+    v_inter  PLS_INTEGER := 0;   -- |A∩B|
+    v_tok    VARCHAR2(4000);
+    v_sim    NUMBER;
+
+    v_set_eq   BOOLEAN := FALSE;
+    v_order_eq BOOLEAN := FALSE;
+
+    ------------------------------------------------------------------
+    -- 문자열 → (중복 제거된) 토큰 집합·리스트 변환
+    ------------------------------------------------------------------
+    PROCEDURE tokenize (
+        p_str   IN  VARCHAR2,
+        p_list  OUT t_list,
+        p_set   OUT t_set,
+        p_cnt   OUT PLS_INTEGER
+    ) IS
+        v_word  VARCHAR2(4000);
+        v_idx   PLS_INTEGER := 0;
+    BEGIN
+        FOR i IN 1 .. REGEXP_COUNT(p_str, '[^ ,;]+') LOOP
+            v_word := UPPER(REGEXP_SUBSTR(p_str, '[^ ,;]+', 1, i));
+            IF NOT p_set.EXISTS(v_word) THEN
+                p_set(v_word) := TRUE;           -- 집합(중복 제거)
+                v_idx         := v_idx + 1;
+                p_list(v_idx) := v_word;         -- 최초 등장 순서
             END IF;
-        END IF;
-    END LOOP;
-    RETURN v_result;
-END;
-
-
-    -- 정규화
-    FUNCTION F_NORMALIZE(s VARCHAR2) RETURN VARCHAR2 IS
-    BEGIN
-        RETURN LOWER(REGEXP_REPLACE(s, '[^A-Za-z0-9]', ''));
-    END;
-
-    -- 문자열 정렬
-    FUNCTION F_SORT_STR(s VARCHAR2) RETURN VARCHAR2 IS
-        arr DBMS_SQL.VARCHAR2_TABLE;
-        i INTEGER;
-        sorted VARCHAR2(4000) := '';
-    BEGIN
-        FOR i IN 1..LENGTH(s) LOOP
-            arr(i) := SUBSTR(s, i, 1);
         END LOOP;
-        -- 오라클 PL/SQL에는 배열 정렬이 없으므로, SQL로 정렬
-        FOR rec IN (
-            SELECT COLUMN_VALUE AS ch
-            FROM TABLE(arr)
-            ORDER BY COLUMN_VALUE
-        ) LOOP
-            sorted := sorted || rec.ch;
-        END LOOP;
-        RETURN sorted;
-    END;
-
-
-ndup1 VARCHAR2(4000);
-    ndup2 VARCHAR2(4000);
-    norm1 VARCHAR2(4000);
-    norm2 VARCHAR2(4000);
-    sort1 VARCHAR2(4000);
-    sort2 VARCHAR2(4000);
-    dist_orig NUMBER;
-    dist_sort NUMBER;
-    len_max_orig NUMBER;
-    len_max_sort NUMBER;
-    sim_orig NUMBER;
-    sim_sort NUMBER;
-    final_sim NUMBER;
+        p_cnt := v_idx;
+    END tokenize;
 BEGIN
+    ----------------------- 1) 토큰화 -----------------------
+    tokenize(p_existing, v_list1, v_set1, v_cnt1);
+    tokenize(p_input   , v_list2, v_set2, v_cnt2);
 
-ndup1 := remove_dup_tokens(str1);
-    ndup2 := remove_dup_tokens(str2);
+    ----------------------- 2) 교집합·합집합 ----------------
+    v_tok := v_set1.FIRST;
+    WHILE v_tok IS NOT NULL LOOP
+        v_union := v_union + 1;
+        IF v_set2.EXISTS(v_tok) THEN
+            v_inter := v_inter + 1;
+        END IF;
+        v_tok := v_set1.NEXT(v_tok);
+    END LOOP;
 
-    norm1 := F_NORMALIZE(ndup1);
-    norm2 := F_NORMALIZE(ndup2);
+    v_tok := v_set2.FIRST;
+    WHILE v_tok IS NOT NULL LOOP
+        IF NOT v_set1.EXISTS(v_tok) THEN
+            v_union := v_union + 1;  -- set2 에만 있는 토큰
+        END IF;
+        v_tok := v_set2.NEXT(v_tok);
+    END LOOP;
 
-    sort1 := F_SORT_STR(norm1);
-    sort2 := F_SORT_STR(norm2);
-
-    -- 원본 Levenshtein
-    len_max_orig := GREATEST(LENGTH(norm1), LENGTH(norm2));
-    IF len_max_orig = 0 THEN
-        sim_orig := 1;
+    IF v_union = 0 THEN            -- 양쪽 모두 빈 문자열
+        v_sim := 100;
     ELSE
-        dist_orig := UTL_MATCH.EDIT_DISTANCE(norm1, norm2);
-        sim_orig := 1 - dist_orig / len_max_orig;
-        IF sim_orig < 0 THEN sim_orig := 0; END IF;
+        v_sim := ROUND(v_inter / v_union * 100, 2);
     END IF;
 
-    -- 정렬 Levenshtein (문자 집합/순서 무시)
-    len_max_sort := GREATEST(LENGTH(sort1), LENGTH(sort2));
-    IF len_max_sort = 0 THEN
-        sim_sort := 1;
-    ELSE
-        dist_sort := UTL_MATCH.EDIT_DISTANCE(sort1, sort2);
-        sim_sort := 1 - dist_sort / len_max_sort;
-        IF sim_sort < 0 THEN sim_sort := 0; END IF;
+    ----------------------- 3) 99 / 100 % 규칙 ---------------
+    v_set_eq := (v_inter = v_union);  -- 토큰 집합 동일?
+
+    IF v_set_eq AND v_cnt1 = v_cnt2 THEN
+        v_order_eq := TRUE;
+        FOR i IN 1 .. v_cnt1 LOOP
+            IF v_list1(i) <> v_list2(i) THEN
+                v_order_eq := FALSE;
+                EXIT;
+            END IF;
+        END LOOP;
     END IF;
 
-    -- 가중치 조합 (정렬 0.7 + 원본 0.3)
-    final_sim := sim_sort * 0.7 + sim_orig * 0.3;
+    IF v_set_eq THEN
+        v_sim := CASE WHEN v_order_eq THEN 100 ELSE 99 END;
+    END IF;
 
-    RETURN ROUND(final_sim * 100, 2);
-END;
+    RETURN v_sim;
+END fn_material_similarity;
 /
-
-
-
-
