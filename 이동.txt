@@ -1,136 +1,120 @@
-CREATE OR REPLACE FUNCTION FN_SIMILARITY_PCT(
-    p_exist IN VARCHAR2,
-    p_input IN VARCHAR2
-) RETURN NUMBER
-IS
-    -- 결과 유사도(%)를 저장할 변수
-    v_similarity NUMBER := 0;
+-- 자재명 유사도(%) 계산 함수
+--  · NULL 처리 : 파라미터 중 하나라도 NULL이면 0
+--  · 공백·콤마·세미콜론을 구분자로 토큰화 후 특수문자 제거
+--  · 대-소문자 무시(UPPER)·중복 토큰 제거·정렬 여부에 따라 100 / 99 결정
+--  · 그 외에는 UTL_MATCH.edit_distance_similarity 사용
+--  · 최종 100% 이더라도 원문이 다르면 99% 로 보정
+create or replace function fn_similarity_pct (
+    p_exist in varchar2,
+    p_input in varchar2
+) return number
+as
+    -- 내부 변수
+    v_exist_clean   varchar2(4000);
+    v_input_clean   varchar2(4000);
+    v_exist_unsort  varchar2(4000) := '';
+    v_input_unsort  varchar2(4000) := '';
+    v_exist_sort    varchar2(4000);
+    v_input_sort    varchar2(4000);
+    v_token         varchar2(4000);
+    v_idx           pls_integer;
+    v_sim           number := 0;
 
-    -- 전처리 후 토큰을 합친 문자열
-    v_exist_str VARCHAR2(4000);
-    v_input_str VARCHAR2(4000);
+    -- 토큰 저장용 컬렉션
+    type t_tab is table of varchar2(4000);
+    l_exist t_tab := t_tab();
+    l_input t_tab := t_tab();
 
-    -- 전처리 및 토큰 분할을 위한 임시 변수
-    v_exist_raw VARCHAR2(4000);
-    v_input_raw VARCHAR2(4000);
+    -- 중복 검사 함수
+    function token_exists (l t_tab, val varchar2) return boolean is
+    begin
+        for i in 1 .. l.count loop
+            if l(i) = val then
+                return true;
+            end if;
+        end loop;
+        return false;
+    end token_exists;
+begin
+    -- NULL 이면 0
+    if p_exist is null or p_input is null then
+        return 0;
+    end if;
 
-    -- 최종 비교용 문자열
-    v_exist_sorted VARCHAR2(4000);
-    v_input_sorted VARCHAR2(4000);
+    -- 구분자 통일(공백) 후 특수문자 제거 및 대문자 변환
+    v_exist_clean :=
+        regexp_replace(
+          regexp_replace(upper(replace(replace(p_exist, ',', ' '), ';', ' ')),
+                         '[^A-Z0-9가-힣一-龥 ]', ' '),
+          ' +', ' ');
+    v_input_clean :=
+        regexp_replace(
+          regexp_replace(upper(replace(replace(p_input, ',', ' '), ';', ' ')),
+                         '[^A-Z0-9가-힣一-龥 ]', ' '),
+          ' +', ' ');
 
-    -- 문자열이 아예 같은지 여부
-    v_exact_same BOOLEAN := FALSE;
-
-    -- 문자열이 정렬 전 기준으로 같은지 여부
-    v_orderless_same BOOLEAN := FALSE;
-
-    -- 토큰 임시 저장용 테이블 타입
-    TYPE t_token_tbl IS TABLE OF VARCHAR2(4000) INDEX BY PLS_INTEGER;
-    v_exist_tokens t_token_tbl;
-    v_input_tokens t_token_tbl;
-
-    -- 중복 제거된 토큰 저장용 set
-    v_exist_set t_token_tbl;
-    v_input_set t_token_tbl;
-
-    -- 정렬에 쓸 토큰 목록
-    v_exist_sorted_list t_token_tbl;
-    v_input_sorted_list t_token_tbl;
-
-    -- 기타 변수
-    v_token VARCHAR2(4000);
-    v_idx PLS_INTEGER;
-    v_cnt PLS_INTEGER;
-
-    -- 구분자 기준 패턴
-    c_delims CONSTANT VARCHAR2(10) := '[ ,;]';
-BEGIN
-    -- NULL 입력 체크
-    IF p_exist IS NULL OR p_input IS NULL THEN
-        RETURN 0;
-    END IF;
-
-    -- 1. 특수문자 제거, 대소문자 통일
-    v_exist_raw := LOWER(REGEXP_REPLACE(p_exist, '[^A-Za-z0-9가-힣ㄱ-ㅎㅏ-ㅣ一-龥]+', ' '));
-    v_input_raw := LOWER(REGEXP_REPLACE(p_input, '[^A-Za-z0-9가-힣ㄱ-ㅎㅏ-ㅣ一-龥]+', ' '));
-
-    -- 2. 공백, 콤마, 세미콜론으로 토큰 분리 및 중복제거
+    ------------------------------------------------------------------
+    -- 기존값 토큰 분해(순서 유지, 중복 제거)
     v_idx := 1;
-    v_cnt := 0;
-    FOR token IN (SELECT DISTINCT REGEXP_SUBSTR(v_exist_raw, '[^ ,;]+', 1, LEVEL) AS token
-                    FROM dual
-                  CONNECT BY REGEXP_SUBSTR(v_exist_raw, '[^ ,;]+', 1, LEVEL) IS NOT NULL)
-    LOOP
-        v_exist_set(v_idx) := token.token;
+    loop
+        v_token := regexp_substr(v_exist_clean, '[^ ]+', 1, v_idx);
+        exit when v_token is null;
+        if not token_exists(l_exist, v_token) then
+            l_exist.extend;
+            l_exist(l_exist.count) := v_token;
+        end if;
         v_idx := v_idx + 1;
-    END LOOP;
+    end loop;
 
-    v_cnt := v_idx - 1;
-
-    -- 토큰을 하나의 문자열로 합침 (정렬 전)
-    v_exist_str := '';
-    FOR i IN 1 .. v_cnt LOOP
-        v_exist_str := v_exist_str || v_exist_set(i);
-    END LOOP;
-
-    -- 정렬을 위해 토큰 배열에 담기
-    v_exist_sorted_list := v_exist_set;
-
-    -- 토큰 정렬 (버블정렬 대체로 SELECT .. ORDER BY 사용)
-    v_exist_sorted := '';
-    FOR token IN (SELECT COLUMN_VALUE FROM TABLE(CAST(COLLECT(v_exist_set(i)) AS SYS.ODCIVARCHAR2LIST)) t
-                  ORDER BY COLUMN_VALUE)
-    LOOP
-        v_exist_sorted := v_exist_sorted || token.COLUMN_VALUE;
-    END LOOP;
-
-    -- 입력값 동일하게 처리
+    -- 입력값 토큰 분해
     v_idx := 1;
-    v_cnt := 0;
-    FOR token IN (SELECT DISTINCT REGEXP_SUBSTR(v_input_raw, '[^ ,;]+', 1, LEVEL) AS token
-                    FROM dual
-                  CONNECT BY REGEXP_SUBSTR(v_input_raw, '[^ ,;]+', 1, LEVEL) IS NOT NULL)
-    LOOP
-        v_input_set(v_idx) := token.token;
+    loop
+        v_token := regexp_substr(v_input_clean, '[^ ]+', 1, v_idx);
+        exit when v_token is null;
+        if not token_exists(l_input, v_token) then
+            l_input.extend;
+            l_input(l_input.count) := v_token;
+        end if;
         v_idx := v_idx + 1;
-    END LOOP;
+    end loop;
 
-    v_cnt := v_idx - 1;
-    v_input_str := '';
-    FOR i IN 1 .. v_cnt LOOP
-        v_input_str := v_input_str || v_input_set(i);
-    END LOOP;
+    ------------------------------------------------------------------
+    -- 순서 유지 문자열 조립
+    for i in 1 .. l_exist.count loop
+        if i > 1 then v_exist_unsort := v_exist_unsort || ' '; end if;
+        v_exist_unsort := v_exist_unsort || l_exist(i);
+    end loop;
 
-    v_input_sorted_list := v_input_set;
-    v_input_sorted := '';
-    FOR token IN (SELECT COLUMN_VALUE FROM TABLE(CAST(COLLECT(v_input_set(i)) AS SYS.ODCIVARCHAR2LIST)) t
-                  ORDER BY COLUMN_VALUE)
-    LOOP
-        v_input_sorted := v_input_sorted || token.COLUMN_VALUE;
-    END LOOP;
+    for i in 1 .. l_input.count loop
+        if i > 1 then v_input_unsort := v_input_unsort || ' '; end if;
+        v_input_unsort := v_input_unsort || l_input(i);
+    end loop;
 
-    -- 3. 문자열 동일성/정렬여부 체크
-    IF v_exist_str = v_input_str THEN
-        v_orderless_same := TRUE;
-    END IF;
+    -- 정렬 후 문자열 조립
+    select listagg(column_value, ' ') within group (order by column_value)
+      into v_exist_sort
+      from table(l_exist);
 
-    IF v_exist_sorted = v_input_sorted THEN
-        v_exact_same := TRUE;
-    END IF;
+    select listagg(column_value, ' ') within group (order by column_value)
+      into v_input_sort
+      from table(l_input);
 
-    -- 4. 유사도 계산
-    IF v_exact_same THEN
-        IF v_exist_str = v_input_str THEN
-            v_similarity := 100;
-        ELSE
-            v_similarity := 99;
-        END IF;
-    ELSIF v_orderless_same THEN
-        v_similarity := 99;
-    ELSE
-        v_similarity := 0;
-    END IF;
+    ------------------------------------------------------------------
+    -- 유사도 계산
+    if v_exist_unsort = v_input_unsort then           -- 순서까지 동일
+        v_sim := 100;
+    elsif v_exist_sort = v_input_sort then            -- 토큰 집합만 동일
+        v_sim := 99;
+    else                                              -- 부분 일치
+        v_sim := utl_match.edit_distance_similarity(v_exist_sort,
+                                                    v_input_sort);
+    end if;
 
-    RETURN v_similarity;
-END FN_SIMILARITY_PCT;
+    -- 원문 차이 보정
+    if v_sim = 100 and upper(p_exist) <> upper(p_input) then
+        v_sim := 99;
+    end if;
+
+    return v_sim;
+end fn_similarity_pct;
 /
