@@ -1,18 +1,7 @@
-/* -------------------------------------------------------------------------
-   fn_material_similarity
-   --------------------------------------------------------------------------
-   ① 전처리
-      · 영/한/중/숫자([:alnum:]) 이외 문자는 공백으로 치환 → 연속 공백 1개로 압축
-      · 대소문자 무시 → UPPER
-   ② 토큰화(공백 기준) · 중복 제거
-   ③ 평가 로직
-      1) 토큰 집합·순서 모두 동일        → 100
-      2) 토큰 집합만 동일(순서 다름)      →  99
-      3) (1)(2)가 아니고 토큰 수 ≠       →  Jaro-Winkler(문자열) ×100
-      4) 그 밖의 경우                   →  Jaccard(토큰 집합) ×100
-   -------------------------------------------------------------------------
-   * Oracle 12c 이상, UTL_MATCH 실행 권한 필요
-   ----------------------------------------------------------------------- */
+------------------------------------------------------------------------------
+--  fn_material_similarity
+--  Oracle 12c 이상
+------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_material_similarity
 (
     p_existing IN VARCHAR2,
@@ -20,65 +9,107 @@ CREATE OR REPLACE FUNCTION fn_material_similarity
 ) RETURN NUMBER
 DETERMINISTIC
 IS
-    /* ───────── 지역 컬렉션 타입 ───────── */
-    TYPE t_set  IS TABLE OF BOOLEAN       INDEX BY VARCHAR2(4000);
-    TYPE t_list IS TABLE OF VARCHAR2(4000)INDEX BY PLS_INTEGER;
+    /* ===== 1. 지역 타입 ===== */
+    TYPE t_set   IS TABLE OF BOOLEAN       INDEX BY VARCHAR2(4000); -- 집합
+    TYPE t_list  IS TABLE OF VARCHAR2(4000)INDEX BY PLS_INTEGER;    -- 순서
 
-    /* ───────── 변수 ───────── */
-    v_clean1  VARCHAR2(32767);
-    v_clean2  VARCHAR2(32767);
-
-    v_set1   t_set;  v_set2   t_set;
-    v_list1  t_list; v_list2  t_list;
-    v_cnt1   PLS_INTEGER;     v_cnt2   PLS_INTEGER;
-
-    v_union  PLS_INTEGER := 0;
-    v_inter  PLS_INTEGER := 0;
-    v_tok    VARCHAR2(4000);
-
-    v_set_eq   BOOLEAN := FALSE;
-    v_order_eq BOOLEAN := FALSE;
-    v_sim      NUMBER;
-
-    /* ───────── 문자열 → 토큰 집합·순서 ───────── */
-    PROCEDURE tokenize (
-        p_str   IN  VARCHAR2,
-        p_list  OUT t_list,
-        p_set   OUT t_set,
-        p_cnt   OUT PLS_INTEGER
-    ) IS
-        v_word VARCHAR2(4000);
-        v_idx  PLS_INTEGER := 0;
+    /* ===== 2. 유틸 : 리스트 정렬(Bubble) ===== */
+    PROCEDURE sort_list(p_list IN OUT t_list) IS
+        tmp VARCHAR2(4000);
     BEGIN
-        FOR i IN 1 .. REGEXP_COUNT(p_str, '[[:alnum:]]+') LOOP
-            v_word := REGEXP_SUBSTR(p_str, '[[:alnum:]]+', 1, i);
+        IF p_list.COUNT <= 1 THEN RETURN; END IF;
+        FOR i IN 1 .. p_list.COUNT-1 LOOP
+            FOR j IN i+1 .. p_list.COUNT LOOP
+                IF p_list(i) > p_list(j) THEN
+                    tmp        := p_list(i);
+                    p_list(i)  := p_list(j);
+                    p_list(j)  := tmp;
+                END IF;
+            END LOOP;
+        END LOOP;
+    END;
+
+    /* ===== 3. 유틸 : 토큰화 ===== */
+    PROCEDURE tokenize (
+        p_str        IN  VARCHAR2,
+        p_set        OUT t_set,
+        p_list_orig  OUT t_list,   -- 중복제거+원순서
+        p_sorted_str OUT VARCHAR2  -- 정렬 후 공백 결합
+    ) IS
+        v_clean VARCHAR2(32767);
+        v_word  VARCHAR2(4000);
+        v_idx   PLS_INTEGER := 0;
+        v_list_sorted t_list;
+    BEGIN
+        /* 1) 특수문자 제거 & 공백 압축 */
+        v_clean := REGEXP_REPLACE(UPPER(p_str), '[^[:alnum:],; ]', ' ');
+        v_clean := REGEXP_REPLACE(v_clean, '[,;]', ' ');
+        v_clean := REGEXP_REPLACE(v_clean, ' +', ' ');
+        v_clean := TRIM(v_clean);
+
+        /* 2) 토큰 추출 */
+        FOR i IN 1 .. REGEXP_COUNT(v_clean, '[[:alnum:]]+') LOOP
+            v_word := REGEXP_SUBSTR(v_clean, '[[:alnum:]]+', 1, i);
             IF NOT p_set.EXISTS(v_word) THEN
                 p_set(v_word) := TRUE;
                 v_idx         := v_idx + 1;
-                p_list(v_idx) := v_word;
+                p_list_orig(v_idx) := v_word;
+                v_list_sorted(v_idx) := v_word;
             END IF;
         END LOOP;
-        p_cnt := v_idx;
-    END tokenize;
+
+        /* 3) 정렬·병합 */
+        sort_list(v_list_sorted);
+        FOR i IN 1 .. v_list_sorted.COUNT LOOP
+            p_sorted_str := p_sorted_str || CASE WHEN i>1 THEN ' ' END
+                                              || v_list_sorted(i);
+        END LOOP;
+    END;
+
+    /* ===== 4. 변수 ===== */
+    v_set1, v_set2          t_set;
+    v_list1, v_list2        t_list;
+    v_sorted1, v_sorted2    VARCHAR2(32767);
+    v_union  PLS_INTEGER := 0;
+    v_inter  PLS_INTEGER := 0;
+    v_tok    VARCHAR2(4000);
+    v_order_eq BOOLEAN := FALSE;
+    v_set_eq   BOOLEAN := FALSE;
+    v_jaccard  NUMBER  := 0;
+    v_string   NUMBER;
 BEGIN
-    /* 1) 특수문자 제거·대소문자 무시·공백 압축 --------------------------- */
-    v_clean1 := REGEXP_REPLACE(UPPER(p_existing), '[^[:alnum:]]', ' ');
-    v_clean1 := REGEXP_REPLACE(v_clean1, ' +', ' ');
-    v_clean1 := TRIM(v_clean1);
+    /* --- 1) 토큰화 --- */
+    tokenize(p_existing, v_set1, v_list1, v_sorted1);
+    tokenize(p_input   , v_set2, v_list2, v_sorted2);
 
-    v_clean2 := REGEXP_REPLACE(UPPER(p_input)   , '[^[:alnum:]]', ' ');
-    v_clean2 := REGEXP_REPLACE(v_clean2, ' +', ' ');
-    v_clean2 := TRIM(v_clean2);
+    /* --- 2) 100 / 99 % 예외 --- */
+    IF v_list1.COUNT = v_list2.COUNT THEN
+        v_order_eq := TRUE;
+        FOR i IN 1 .. v_list1.COUNT LOOP
+            IF v_list1(i) <> v_list2(i) THEN v_order_eq := FALSE; EXIT; END IF;
+        END LOOP;
+    END IF;
 
-    /* 2) 토큰화 --------------------------------------------------------- */
-    tokenize(v_clean1, v_list1, v_set1, v_cnt1);
-    tokenize(v_clean2, v_list2, v_set2, v_cnt2);
+    IF v_set1.COUNT = v_set2.COUNT THEN
+        v_set_eq := TRUE;
+        v_tok := v_set1.FIRST;
+        WHILE v_tok IS NOT NULL LOOP
+            IF NOT v_set2.EXISTS(v_tok) THEN v_set_eq := FALSE; EXIT; END IF;
+            v_tok := v_set1.NEXT(v_tok);
+        END LOOP;
+    END IF;
 
-    /* 3) 토큰 집합 동일? ------------------------------------------------- */
+    IF v_order_eq THEN
+        RETURN 100;
+    ELSIF v_set_eq THEN
+        RETURN 99;
+    END IF;
+
+    /* --- 3) 토큰 Jaccard --- */
     v_tok := v_set1.FIRST;
     WHILE v_tok IS NOT NULL LOOP
-        IF v_set2.EXISTS(v_tok) THEN v_inter := v_inter + 1; END IF;
         v_union := v_union + 1;
+        IF v_set2.EXISTS(v_tok) THEN v_inter := v_inter + 1; END IF;
         v_tok := v_set1.NEXT(v_tok);
     END LOOP;
 
@@ -88,35 +119,40 @@ BEGIN
         v_tok := v_set2.NEXT(v_tok);
     END LOOP;
 
-    v_set_eq := (v_inter = v_union);           -- 집합 동일?
-
-    /* 4) 순서까지 동일? -------------------------------------------------- */
-    IF v_set_eq AND v_cnt1 = v_cnt2 THEN
-        v_order_eq := TRUE;
-        FOR i IN 1 .. v_cnt1 LOOP
-            IF v_list1(i) <> v_list2(i) THEN
-                v_order_eq := FALSE; EXIT;
-            END IF;
-        END LOOP;
+    IF v_union > 0 THEN
+        v_jaccard := ROUND(v_inter / v_union * 100, 2);
     END IF;
 
-    /* 5) 최종 유사도 결정 ------------------------------------------------ */
-    IF v_set_eq THEN
-        v_sim := CASE WHEN v_order_eq THEN 100 ELSE 99 END;
+    /* --- 4) 문자열 Jaro-Winkler (0-100 정수) --- */
+    v_string := UTL_MATCH.JARO_WINKLER_SIMILARITY(
+                    REGEXP_REPLACE(UPPER(p_existing),'[^[:alnum:]]',''),
+                    REGEXP_REPLACE(UPPER(p_input)   ,'[^[:alnum:]]',''));
 
-    ELSIF v_cnt1 <> v_cnt2 THEN            -- *** 토큰 수 다름 → 문자열 기반 ***
-        v_sim := ROUND(
-                    UTL_MATCH.JARO_WINKLER_SIMILARITY(v_clean1, v_clean2)
-                 , 2);
-
-    ELSE                                   -- 토큰 수 같지만 집합 다름
-        IF v_union = 0 THEN
-            v_sim := 100;                  -- 둘 다 빈 문자열
-        ELSE
-            v_sim := ROUND(v_inter / v_union * 100, 2);  -- Jaccard
-        END IF;
-    END IF;
-
-    RETURN v_sim;
+    /* --- 5) 큰 값 리턴 --- */
+    RETURN GREATEST(v_jaccard, v_string);
 END fn_material_similarity;
 /
+
+
+/* 1. 문제에서 제시한 케이스 → 99 % */
+SELECT fn_material_similarity(
+         'ABC DEF GHI, JKL MN;OP',
+         'MN OP,DEF;ABC GHI JKL ABC') AS sim_pct
+FROM dual;           -- 99
+
+/* 2. 순서·집합 모두 동일 → 100 % */
+SELECT fn_material_similarity('ABC DEF', 'ABC DEF') AS sim_pct
+FROM dual;           -- 100
+
+/* 3. 토큰 수 달라 Jaccard ↓ / 문자열 ↑  → 92 % (예) */
+SELECT fn_material_similarity('ABC DEF', 'ABC DEF G') AS sim_pct
+FROM dual;           -- 92  (값은 입력 길이·오차에 따라 달라질 수 있음)
+
+
+/* 신규 자재명과 가장 유사한 상위 10건 찾기 */
+SELECT material_code,
+       material_name,
+       fn_material_similarity(material_name, :new_name) AS sim_pct
+FROM   material_master
+ORDER  BY sim_pct DESC
+FETCH  FIRST 10 ROWS ONLY;
