@@ -1,145 +1,180 @@
-/* -------------------------------------------------------------------------
-   fn_material_similarity  (Oracle 12c 이상)
-   --------------------------------------------------------------------------
-   • NULL 처리  : 기존값 또는 입력값이 NULL → 0  (즉시 반환)
-   • 특수문자 제거 : 영·한·중·숫자만 유지
-   • 토큰화      : 공백·콤마·세미콜론
-   • 중복 제거·정렬·대소문자 무시
-   • 100 / 99 % 규칙
-   • 그 외 →  MAX(토큰 Jaccard, 문자열 Jaro-Winkler)
-   ----------------------------------------------------------------------- */
-CREATE OR REPLACE FUNCTION fn_material_similarity
+/*======================================================================
+  FN_SIMILARITY_PCT
+  ----------------------------------------------------------------------
+  • NULL 인수             → 0
+  • 특수문자 제거          : 영/한/중/숫자([:alnum:])만 유지
+  • 토큰 구분             : 공백·콤마(,)·세미콜론(;)
+  • 중복 제거·대소문자 무시·토큰 오름차순 정렬
+  • 규칙
+      ① 토큰·순서 모두 동일                → 100
+      ② 토큰 집합만 동일                  → 99
+      ③ 그 밖의 경우 → MAX(토큰 Jaccard, 문자열 Jaro-Winkler)
+      ※ 최종 값이 100 이면서 원문이 다르면 99 로 강제
+  • 요구사항 반영
+      - 함수  이름 : FN_SIMILARITY_PCT
+      - 매개변수   : p_exist, p_input
+======================================================================*/
+CREATE OR REPLACE FUNCTION fn_similarity_pct
 (
-    p_existing IN VARCHAR2,
-    p_input    IN VARCHAR2
+    p_exist IN VARCHAR2,
+    p_input IN VARCHAR2
 ) RETURN NUMBER
 DETERMINISTIC
 IS
-    /* ─────────── EARLY EXIT : NULL ─────────── */
-    -- NULL ≡ 유사도 0
-    -- 빈 문자열('') 은 “내용 없음” 으로 간주하려면 아래 조건에 OR TRIM(...)='' 추가
-    -- (요구사항은 “NULL” 만 0 처리이므로 그대로 둠)
-    IF p_existing IS NULL OR p_input IS NULL THEN
+    ----------------------------------------------------------------------------
+    -- 0. NULL 처리
+    ----------------------------------------------------------------------------
+    IF p_exist IS NULL OR p_input IS NULL THEN
         RETURN 0;
     END IF;
 
-    /* ─────────── 지역 타입 ─────────── */
-    TYPE t_set   IS TABLE OF BOOLEAN       INDEX BY VARCHAR2(4000);
-    TYPE t_list  IS TABLE OF VARCHAR2(4000)INDEX BY PLS_INTEGER;
+    ----------------------------------------------------------------------------
+    -- 1. 지역 타입
+    ----------------------------------------------------------------------------
+    TYPE t_set  IS TABLE OF BOOLEAN       INDEX BY VARCHAR2(4000);
+    TYPE t_list IS TABLE OF VARCHAR2(4000)INDEX BY PLS_INTEGER;
 
-    /* ─────────── 유틸 : 리스트 정렬 ─────────── */
-    PROCEDURE sort_list(p_list IN OUT t_list) IS
-        tmp VARCHAR2(4000);
+    ----------------------------------------------------------------------------
+    -- 2. 보조 : 리스트 정렬 (단순 Bubble, 토큰 수가 극소이므로 OK)
+    ----------------------------------------------------------------------------
+    PROCEDURE sort_list(p IN OUT t_list) IS
+        t VARCHAR2(4000);
     BEGIN
-        IF p_list.COUNT <= 1 THEN RETURN; END IF;
-        FOR i IN 1 .. p_list.COUNT-1 LOOP
-            FOR j IN i+1 .. p_list.COUNT LOOP
-                IF p_list(i) > p_list(j) THEN
-                    tmp        := p_list(i);
-                    p_list(i)  := p_list(j);
-                    p_list(j)  := tmp;
+        FOR i IN 1 .. p.COUNT-1 LOOP
+            FOR j IN i+1 .. p.COUNT LOOP
+                IF p(i) > p(j) THEN
+                    t   := p(i);
+                    p(i):= p(j);
+                    p(j):= t;
                 END IF;
             END LOOP;
         END LOOP;
     END;
 
-    /* ─────────── 유틸 : 토큰화 ─────────── */
+    ----------------------------------------------------------------------------
+    -- 3. 보조 : 문자열 → 집합·리스트·문자열(정렬 有/無)
+    ----------------------------------------------------------------------------
     PROCEDURE tokenize (
-        p_str        IN  VARCHAR2,
-        p_set        OUT t_set,
-        p_list_orig  OUT t_list,
-        p_sorted_str OUT VARCHAR2
+        p_src          IN  VARCHAR2,
+        p_set          OUT t_set,
+        p_list_orig    OUT t_list,     -- 중복 제거 + 원순서
+        p_unsorted_str OUT VARCHAR2,   -- 중복 제거 후 원순서 문자열
+        p_sorted_str   OUT VARCHAR2    -- 토큰 정렬 후 문자열
     ) IS
-        v_clean VARCHAR2(32767);
-        v_word  VARCHAR2(4000);
-        v_idx   PLS_INTEGER := 0;
-        v_list_sorted t_list;
+        v      VARCHAR2(32767);
+        tok    VARCHAR2(4000);
+        idx    PLS_INTEGER := 0;
+        list_s t_list;                 -- 정렬용 복사본
     BEGIN
-        v_clean := REGEXP_REPLACE(UPPER(p_str), '[^[:alnum:],; ]', ' ');
-        v_clean := REGEXP_REPLACE(v_clean, '[,;]', ' ');
-        v_clean := REGEXP_REPLACE(v_clean, ' +', ' ');
-        v_clean := TRIM(v_clean);
+        /* 특수문자 제거, 구분자 통일, 공백 압축 */
+        v := REGEXP_REPLACE(UPPER(p_src), '[^[:alnum:],; ]', ' ');
+        v := REGEXP_REPLACE(v, '[,;]', ' ');
+        v := REGEXP_REPLACE(v, ' +',   ' ');
+        v := TRIM(v);
 
-        FOR i IN 1 .. REGEXP_COUNT(v_clean, '[[:alnum:]]+') LOOP
-            v_word := REGEXP_SUBSTR(v_clean, '[[:alnum:]]+', 1, i);
-            IF NOT p_set.EXISTS(v_word) THEN
-                p_set(v_word) := TRUE;
-                v_idx         := v_idx + 1;
-                p_list_orig(v_idx) := v_word;
-                v_list_sorted(v_idx) := v_word;
+        /* 토큰 추출 & 중복 제거 */
+        FOR i IN 1 .. REGEXP_COUNT(v, '[[:alnum:]]+') LOOP
+            tok := REGEXP_SUBSTR(v, '[[:alnum:]]+', 1, i);
+            IF NOT p_set.EXISTS(tok) THEN
+                p_set(tok) := TRUE;
+                idx        := idx + 1;
+                p_list_orig(idx) := tok;
+                list_s(idx)      := tok;
             END IF;
         END LOOP;
 
-        sort_list(v_list_sorted);
-        FOR i IN 1 .. v_list_sorted.COUNT LOOP
-            p_sorted_str := p_sorted_str || CASE WHEN i>1 THEN ' ' END
-                                              || v_list_sorted(i);
+        /* 원순서 문자열 */
+        FOR i IN 1 .. p_list_orig.COUNT LOOP
+            p_unsorted_str := p_unsorted_str
+                              || CASE WHEN i>1 THEN ' ' END
+                              || p_list_orig(i);
+        END LOOP;
+
+        /* 정렬 문자열 */
+        sort_list(list_s);
+        FOR i IN 1 .. list_s.COUNT LOOP
+            p_sorted_str := p_sorted_str
+                            || CASE WHEN i>1 THEN ' ' END
+                            || list_s(i);
         END LOOP;
     END;
 
-    /* ─────────── 변수 선언 ─────────── */
-    v_set1, v_set2        t_set;
-    v_list1, v_list2      t_list;
-    v_sorted1 VARCHAR2(32767);
-    v_sorted2 VARCHAR2(32767);
-    v_union  PLS_INTEGER := 0;
-    v_inter  PLS_INTEGER := 0;
-    v_tok    VARCHAR2(4000);
-    v_order_eq BOOLEAN := FALSE;
-    v_set_eq   BOOLEAN := FALSE;
-    v_jaccard  NUMBER  := 0;
-    v_string   NUMBER;
+    ----------------------------------------------------------------------------
+    -- 4. 변수
+    ----------------------------------------------------------------------------
+    v_set1           t_set;
+    v_set2           t_set;
+    v_list1          t_list;
+    v_list2          t_list;
+    v_unsorted1      VARCHAR2(32767);
+    v_unsorted2      VARCHAR2(32767);
+    v_sorted1        VARCHAR2(32767);
+    v_sorted2        VARCHAR2(32767);
+
+    v_union_cnt      PLS_INTEGER := 0;
+    v_inter_cnt      PLS_INTEGER := 0;
+    v_tok            VARCHAR2(4000);
+
+    v_jaccard_pct    NUMBER := 0;
+    v_jaro_pct       NUMBER;
+
+    v_result         NUMBER;
 BEGIN
-    /* 1) 토큰화 --------------------------------------------------------- */
-    tokenize(p_existing, v_set1, v_list1, v_sorted1);
-    tokenize(p_input   , v_set2, v_list2, v_sorted2);
+    ------------------------------------------------------------------------
+    -- 5. 토큰 작업
+    ------------------------------------------------------------------------
+    tokenize(p_exist, v_set1, v_list1, v_unsorted1, v_sorted1);
+    tokenize(p_input, v_set2, v_list2, v_unsorted2, v_sorted2);
 
-    /* 2) 100 / 99 % 규칙 ------------------------------------------------ */
-    IF v_list1.COUNT = v_list2.COUNT THEN
-        v_order_eq := TRUE;
-        FOR i IN 1 .. v_list1.COUNT LOOP
-            IF v_list1(i) <> v_list2(i) THEN
-                v_order_eq := FALSE; EXIT;
-            END IF;
-        END LOOP;
-    END IF;
-
-    IF v_set1.COUNT = v_set2.COUNT THEN
-        v_set_eq := TRUE;
+    ------------------------------------------------------------------------
+    -- 6. 100 / 99 % 규칙
+    ------------------------------------------------------------------------
+    IF v_unsorted1 = v_unsorted2 THEN        -- 토큰·순서 동일
+        v_result := 100;
+    ELSIF v_sorted1   = v_sorted2 THEN       -- 집합 동일
+        v_result :=  99;
+    ELSE
+        --------------------------------------------------------------------
+        -- 7. 토큰 Jaccard
+        --------------------------------------------------------------------
         v_tok := v_set1.FIRST;
         WHILE v_tok IS NOT NULL LOOP
-            IF NOT v_set2.EXISTS(v_tok) THEN v_set_eq := FALSE; EXIT; END IF;
+            v_union_cnt := v_union_cnt + 1;
+            IF v_set2.EXISTS(v_tok) THEN v_inter_cnt := v_inter_cnt + 1; END IF;
             v_tok := v_set1.NEXT(v_tok);
         END LOOP;
+
+        v_tok := v_set2.FIRST;
+        WHILE v_tok IS NOT NULL LOOP
+            IF NOT v_set1.EXISTS(v_tok) THEN v_union_cnt := v_union_cnt + 1; END IF;
+            v_tok := v_set2.NEXT(v_tok);
+        END LOOP;
+
+        IF v_union_cnt > 0 THEN
+            v_jaccard_pct := ROUND(v_inter_cnt / v_union_cnt * 100, 2);
+        END IF;
+
+        --------------------------------------------------------------------
+        -- 8. 문자열 Jaro-Winkler (UTL_MATCH) 0-100 정수
+        --------------------------------------------------------------------
+        v_jaro_pct := UTL_MATCH.JARO_WINKLER_SIMILARITY(
+                          REGEXP_REPLACE(UPPER(p_exist),'[^[:alnum:]]',''),
+                          REGEXP_REPLACE(UPPER(p_input),'[^[:alnum:]]',''));
+
+        --------------------------------------------------------------------
+        -- 9. 더 큰 값 선택
+        --------------------------------------------------------------------
+        v_result := GREATEST(v_jaccard_pct, v_jaro_pct);
     END IF;
 
-    IF v_order_eq THEN RETURN 100; END IF;
-    IF v_set_eq   THEN RETURN  99; END IF;
-
-    /* 3) 토큰 Jaccard ---------------------------------------------------- */
-    v_tok := v_set1.FIRST;
-    WHILE v_tok IS NOT NULL LOOP
-        v_union := v_union + 1;
-        IF v_set2.EXISTS(v_tok) THEN v_inter := v_inter + 1; END IF;
-        v_tok := v_set1.NEXT(v_tok);
-    END LOOP;
-
-    v_tok := v_set2.FIRST;
-    WHILE v_tok IS NOT NULL LOOP
-        IF NOT v_set1.EXISTS(v_tok) THEN v_union := v_union + 1; END IF;
-        v_tok := v_set2.NEXT(v_tok);
-    END LOOP;
-
-    IF v_union > 0 THEN
-        v_jaccard := ROUND(v_inter / v_union * 100, 2);
+    ------------------------------------------------------------------------
+    -- 10. “100 이면서 원문이 다르면 99” 규칙
+    ------------------------------------------------------------------------
+    IF v_result = 100
+       AND TRIM(UPPER(p_exist)) <> TRIM(UPPER(p_input)) THEN
+        v_result := 99;
     END IF;
 
-    /* 4) 문자열 Jaro-Winkler -------------------------------------------- */
-    v_string := UTL_MATCH.JARO_WINKLER_SIMILARITY(
-                    REGEXP_REPLACE(UPPER(p_existing),'[^[:alnum:]]',''),
-                    REGEXP_REPLACE(UPPER(p_input)   ,'[^[:alnum:]]',''));
-
-    /* 5) 최종 : 둘 중 큰 값 --------------------------------------------- */
-    RETURN GREATEST(v_jaccard, v_string);
-END fn_material_similarity;
+    RETURN v_result;
+END fn_similarity_pct;
 /
