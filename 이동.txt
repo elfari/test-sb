@@ -1,140 +1,136 @@
-/*=====================================================================
-  FN_SIMILARITY_PCT  –  경량·고속 버전
-  Oracle 19c 이상 (PRAGMA UDF 사용)  /  UTL_MATCH 권한 필요
-=====================================================================*/
-CREATE OR REPLACE FUNCTION fn_similarity_pct
-(
+CREATE OR REPLACE FUNCTION FN_SIMILARITY_PCT(
     p_exist IN VARCHAR2,
     p_input IN VARCHAR2
 ) RETURN NUMBER
-DETERMINISTIC
-PRAGMA UDF                                -- ⟵ SQL 실행 시 컨텍스트 스위치 최소화
 IS
-    ------------------------------------------------------------------
-    -- NULL → 0
-    ------------------------------------------------------------------
+    -- 결과 유사도(%)를 저장할 변수
+    v_similarity NUMBER := 0;
+
+    -- 전처리 후 토큰을 합친 문자열
+    v_exist_str VARCHAR2(4000);
+    v_input_str VARCHAR2(4000);
+
+    -- 전처리 및 토큰 분할을 위한 임시 변수
+    v_exist_raw VARCHAR2(4000);
+    v_input_raw VARCHAR2(4000);
+
+    -- 최종 비교용 문자열
+    v_exist_sorted VARCHAR2(4000);
+    v_input_sorted VARCHAR2(4000);
+
+    -- 문자열이 아예 같은지 여부
+    v_exact_same BOOLEAN := FALSE;
+
+    -- 문자열이 정렬 전 기준으로 같은지 여부
+    v_orderless_same BOOLEAN := FALSE;
+
+    -- 토큰 임시 저장용 테이블 타입
+    TYPE t_token_tbl IS TABLE OF VARCHAR2(4000) INDEX BY PLS_INTEGER;
+    v_exist_tokens t_token_tbl;
+    v_input_tokens t_token_tbl;
+
+    -- 중복 제거된 토큰 저장용 set
+    v_exist_set t_token_tbl;
+    v_input_set t_token_tbl;
+
+    -- 정렬에 쓸 토큰 목록
+    v_exist_sorted_list t_token_tbl;
+    v_input_sorted_list t_token_tbl;
+
+    -- 기타 변수
+    v_token VARCHAR2(4000);
+    v_idx PLS_INTEGER;
+    v_cnt PLS_INTEGER;
+
+    -- 구분자 기준 패턴
+    c_delims CONSTANT VARCHAR2(10) := '[ ,;]';
+BEGIN
+    -- NULL 입력 체크
     IF p_exist IS NULL OR p_input IS NULL THEN
         RETURN 0;
     END IF;
 
-    ------------------------------------------------------------------
-    -- 1.  전역 상수
-    ------------------------------------------------------------------
-    c_rx  CONSTANT VARCHAR2(100) := '[^[:alnum:]]';   -- 특수문자
-    c_sp  CONSTANT VARCHAR2(1)   := ' ';
+    -- 1. 특수문자 제거, 대소문자 통일
+    v_exist_raw := LOWER(REGEXP_REPLACE(p_exist, '[^A-Za-z0-9가-힣ㄱ-ㅎㅏ-ㅣ一-龥]+', ' '));
+    v_input_raw := LOWER(REGEXP_REPLACE(p_input, '[^A-Za-z0-9가-힣ㄱ-ㅎㅏ-ㅣ一-龥]+', ' '));
 
-    ------------------------------------------------------------------
-    -- 2.  로컬 변수 (모두 1 000 byte 한정)
-    ------------------------------------------------------------------
-    v_clean1   VARCHAR2(1000);
-    v_clean2   VARCHAR2(1000);
+    -- 2. 공백, 콤마, 세미콜론으로 토큰 분리 및 중복제거
+    v_idx := 1;
+    v_cnt := 0;
+    FOR token IN (SELECT DISTINCT REGEXP_SUBSTR(v_exist_raw, '[^ ,;]+', 1, LEVEL) AS token
+                    FROM dual
+                  CONNECT BY REGEXP_SUBSTR(v_exist_raw, '[^ ,;]+', 1, LEVEL) IS NOT NULL)
+    LOOP
+        v_exist_set(v_idx) := token.token;
+        v_idx := v_idx + 1;
+    END LOOP;
 
-    v_tokens1  SYS.ODCIVARCHAR2LIST := SYS.ODCIVARCHAR2LIST();
-    v_tokens2  SYS.ODCIVARCHAR2LIST := SYS.ODCIVARCHAR2LIST();
+    v_cnt := v_idx - 1;
 
-    v_sorted1  VARCHAR2(1000);
-    v_sorted2  VARCHAR2(1000);
-    v_unsort1  VARCHAR2(1000);
-    v_unsort2  VARCHAR2(1000);
+    -- 토큰을 하나의 문자열로 합침 (정렬 전)
+    v_exist_str := '';
+    FOR i IN 1 .. v_cnt LOOP
+        v_exist_str := v_exist_str || v_exist_set(i);
+    END LOOP;
 
-    v_inter    PLS_INTEGER := 0;
-    v_union    PLS_INTEGER := 0;
-    v_jaccard  NUMBER      := 0;
-    v_jaro     NUMBER;
-    v_result   NUMBER;
-BEGIN
-    /*--------------------------------------------------------------
-      3.  특수문자 제거·공백 통일   (정규식 1회씩만 호출)
-    --------------------------------------------------------------*/
-    v_clean1 := REGEXP_REPLACE( UPPER(p_exist), c_rx, c_sp );
-    v_clean1 := REGEXP_REPLACE( v_clean1, '[,;]',  c_sp );
-    v_clean1 := REGEXP_REPLACE( v_clean1, ' +',   c_sp );
-    v_clean1 := TRIM(v_clean1);
+    -- 정렬을 위해 토큰 배열에 담기
+    v_exist_sorted_list := v_exist_set;
 
-    v_clean2 := REGEXP_REPLACE( UPPER(p_input), c_rx, c_sp );
-    v_clean2 := REGEXP_REPLACE( v_clean2, '[,;]', c_sp );
-    v_clean2 := REGEXP_REPLACE( v_clean2, ' +',  c_sp );
-    v_clean2 := TRIM(v_clean2);
+    -- 토큰 정렬 (버블정렬 대체로 SELECT .. ORDER BY 사용)
+    v_exist_sorted := '';
+    FOR token IN (SELECT COLUMN_VALUE FROM TABLE(CAST(COLLECT(v_exist_set(i)) AS SYS.ODCIVARCHAR2LIST)) t
+                  ORDER BY COLUMN_VALUE)
+    LOOP
+        v_exist_sorted := v_exist_sorted || token.COLUMN_VALUE;
+    END LOOP;
 
-    /*--------------------------------------------------------------
-      4.  토큰 분리 & 중복 제거  –  SQL 한 문으로 수행
-        ⇒ EXECUTE IMMEDIATE 로 컨텍스트 스위치 1회만
-    --------------------------------------------------------------*/
-    EXECUTE IMMEDIATE '
-        SELECT CAST(COLLECT(DISTINCT token ORDER BY token) AS SYS.ODCIVARCHAR2LIST),
-               CAST(COLLECT(DISTINCT token)               AS SYS.ODCIVARCHAR2LIST)
-        FROM (SELECT REGEXP_SUBSTR(:txt, ''[[:alnum:]]+'', 1, LEVEL) token
-                FROM dual CONNECT BY REGEXP_SUBSTR(:txt, ''[[:alnum:]]+'', 1, LEVEL) IS NOT NULL)'
-        INTO  v_tokens1, v_tokens2  USING v_clean1, v_clean1;
+    -- 입력값 동일하게 처리
+    v_idx := 1;
+    v_cnt := 0;
+    FOR token IN (SELECT DISTINCT REGEXP_SUBSTR(v_input_raw, '[^ ,;]+', 1, LEVEL) AS token
+                    FROM dual
+                  CONNECT BY REGEXP_SUBSTR(v_input_raw, '[^ ,;]+', 1, LEVEL) IS NOT NULL)
+    LOOP
+        v_input_set(v_idx) := token.token;
+        v_idx := v_idx + 1;
+    END LOOP;
 
-    -- v_tokens1 = 정렬, v_tokens2 = 원순서(중복 제거)
+    v_cnt := v_idx - 1;
+    v_input_str := '';
+    FOR i IN 1 .. v_cnt LOOP
+        v_input_str := v_input_str || v_input_set(i);
+    END LOOP;
 
-    EXECUTE IMMEDIATE '
-        SELECT CAST(COLLECT(DISTINCT token ORDER BY token) AS SYS.ODCIVARCHAR2LIST),
-               CAST(COLLECT(DISTINCT token)               AS SYS.ODCIVARCHAR2LIST)
-        FROM (SELECT REGEXP_SUBSTR(:txt, ''[[:alnum:]]+'', 1, LEVEL) token
-                FROM dual CONNECT BY REGEXP_SUBSTR(:txt, ''[[:alnum:]]+'', 1, LEVEL) IS NOT NULL)'
-        INTO  v_tokens2(1), v_tokens2(2)  USING v_clean2, v_clean2;
+    v_input_sorted_list := v_input_set;
+    v_input_sorted := '';
+    FOR token IN (SELECT COLUMN_VALUE FROM TABLE(CAST(COLLECT(v_input_set(i)) AS SYS.ODCIVARCHAR2LIST)) t
+                  ORDER BY COLUMN_VALUE)
+    LOOP
+        v_input_sorted := v_input_sorted || token.COLUMN_VALUE;
+    END LOOP;
 
-    /*--------------------------------------------------------------
-      5.  정렬 문자열 / 원순서 문자열
-    --------------------------------------------------------------*/
-    v_sorted1 := LISTAGG(v_tokens1,  ' ') WITHIN GROUP (ORDER BY ROWNUM);
-    v_unsort1 := LISTAGG(v_tokens1(2), ' ') WITHIN GROUP (ORDER BY ROWNUM);
+    -- 3. 문자열 동일성/정렬여부 체크
+    IF v_exist_str = v_input_str THEN
+        v_orderless_same := TRUE;
+    END IF;
 
-    v_sorted2 := LISTAGG(v_tokens2(1), ' ') WITHIN GROUP (ORDER BY ROWNUM);
-    v_unsort2 := LISTAGG(v_tokens2(2), ' ') WITHIN GROUP (ORDER BY ROWNUM);
+    IF v_exist_sorted = v_input_sorted THEN
+        v_exact_same := TRUE;
+    END IF;
 
-    /*--------------------------------------------------------------
-      6.  99 / 100 규칙
-    --------------------------------------------------------------*/
-    IF v_sorted1 = v_sorted2 THEN
-        IF v_unsort1 = v_unsort2 THEN
-            v_result := 100;
+    -- 4. 유사도 계산
+    IF v_exact_same THEN
+        IF v_exist_str = v_input_str THEN
+            v_similarity := 100;
         ELSE
-            v_result :=  99;
+            v_similarity := 99;
         END IF;
+    ELSIF v_orderless_same THEN
+        v_similarity := 99;
     ELSE
-        ----------------------------------------------------------------
-        -- 7.  토큰 Jaccard  (정렬 리스트 사용)
-        ----------------------------------------------------------------
-        v_union := v_tokens1.COUNT + v_tokens2(1).COUNT;
-
-        FOR i IN 1 .. v_tokens1.COUNT LOOP
-            FOR j IN 1 .. v_tokens2(1).COUNT LOOP
-                IF v_tokens1(i) = v_tokens2(1)(j) THEN
-                    v_inter := v_inter + 1;
-                    EXIT;
-                END IF;
-            END LOOP;
-        END LOOP;
-
-        v_union := v_union - v_inter;                     -- ∪ = Σ - ∩
-        IF v_union > 0 THEN
-            v_jaccard := ROUND(v_inter / v_union * 100, 2);
-        END IF;
-
-        ----------------------------------------------------------------
-        -- 8.  문자열 Jaro-Winkler
-        ----------------------------------------------------------------
-        v_jaro := UTL_MATCH.JARO_WINKLER_SIMILARITY(
-                      REPLACE(v_clean1, c_sp),
-                      REPLACE(v_clean2, c_sp) );
-
-        ----------------------------------------------------------------
-        -- 9.  더 큰 값 사용
-        ----------------------------------------------------------------
-        v_result := GREATEST(v_jaccard, v_jaro);
+        v_similarity := 0;
     END IF;
 
-    /*--------------------------------------------------------------
-      10.  100 → 99 보정 (원문 다르면)
-    --------------------------------------------------------------*/
-    IF v_result = 100 AND
-       TRIM(UPPER(p_exist)) <> TRIM(UPPER(p_input)) THEN
-        v_result := 99;
-    END IF;
-
-    RETURN v_result;
-END fn_similarity_pct;
+    RETURN v_similarity;
+END FN_SIMILARITY_PCT;
 /
