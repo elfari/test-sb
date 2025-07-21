@@ -3,25 +3,28 @@ create or replace function fn_similarity_pct (
     p_input in varchar2
 ) return number
 as
-    /* ───────────────────────── 내부 변수 ───────────────────────── */
-    v_exist_clean   varchar2(4000);   -- 특수문자 제거 후 원본
+    ------------------------------------------------------------------
+    -- 변수 선언 (모두 상단)
+    v_exist_clean   varchar2(4000);  -- 특수문자 제거 후 문자열
     v_input_clean   varchar2(4000);
 
-    v_exist_unsort  varchar2(4000) := ''; -- 토큰 순서 유지
+    v_exist_unsort  varchar2(4000) := ''; -- 순서 유지 문자열
     v_input_unsort  varchar2(4000) := '';
-    v_exist_sort    varchar2(4000);       -- 토큰 정렬 후
+    v_exist_sort    varchar2(4000);       -- 정렬 후 문자열
     v_input_sort    varchar2(4000);
 
     v_token         varchar2(4000);
-    v_idx           pls_integer;
-    v_sim           number := 0;
+    v_idx           pls_integer := 1;
+    v_sim           number := 0;          -- 최종 유사도(%)
 
-    /* ── 토큰 저장용 컬렉션 : 스키마 수준 타입(SYS.ODCIVARCHAR2LIST) 사용 ── */
-    l_exist  sys.odcivarchar2list := sys.odcivarchar2list();
-    l_input  sys.odcivarchar2list := sys.odcivarchar2list();
+    -- 전역 타입 컬렉션
+    l_exist sys.odcivarchar2list := sys.odcivarchar2list();
+    l_input sys.odcivarchar2list := sys.odcivarchar2list();
 
-    /* 중복 토큰 체크 */
-    function token_exists (l sys.odcivarchar2list, val varchar2) return boolean is
+    -- 중복 토큰 확인
+    function token_exists (l sys.odcivarchar2list, val varchar2)
+        return boolean
+    is
     begin
         for i in 1 .. l.count loop
             if l(i) = val then return true; end if;
@@ -29,12 +32,14 @@ as
         return false;
     end token_exists;
 begin
-    /* NULL 이면 0 */
+    ------------------------------------------------------------------
+    -- NULL 처리
     if p_exist is null or p_input is null then
         return 0;
     end if;
 
-    /* 구분자 통일·특수문자 제거·대문자화 */
+    ------------------------------------------------------------------
+    -- 구분자 통일(공백)·특수문자 제거·대소문자 통일
     v_exist_clean :=
         regexp_replace(
           regexp_replace(upper(replace(replace(p_exist, ',', ' '), ';', ' ')),
@@ -46,8 +51,8 @@ begin
                          '[^A-Z0-9가-힣一-龥 ]', ' '),
           ' +', ' ');
 
-    /* ───────────── 기존값 토큰화 & 중복 제거 ───────────── */
-    v_idx := 1;
+    ------------------------------------------------------------------
+    -- 기존값 토큰화·중복 제거
     loop
         v_token := regexp_substr(v_exist_clean, '[^ ]+', 1, v_idx);
         exit when v_token is null;
@@ -57,7 +62,7 @@ begin
         v_idx := v_idx + 1;
     end loop;
 
-    /* ───────────── 입력값 토큰화 & 중복 제거 ───────────── */
+    -- 입력값 토큰화·중복 제거
     v_idx := 1;
     loop
         v_token := regexp_substr(v_input_clean, '[^ ]+', 1, v_idx);
@@ -68,7 +73,8 @@ begin
         v_idx := v_idx + 1;
     end loop;
 
-    /* ───────────── 순서 유지 문자열 재조립 ───────────── */
+    ------------------------------------------------------------------
+    -- 순서 유지 문자열 재조립
     for i in 1 .. l_exist.count loop
         if i > 1 then v_exist_unsort := v_exist_unsort || ' '; end if;
         v_exist_unsort := v_exist_unsort || l_exist(i);
@@ -79,30 +85,32 @@ begin
         v_input_unsort := v_input_unsort || l_input(i);
     end loop;
 
-    /* ───────────── 토큰 정렬 후 문자열 재조립 ───────────── */
+    ------------------------------------------------------------------
+    -- 컬렉션을 CAST 해서 SQL 영역에서 사용 (ORA-22905 방지)
     select listagg(column_value, ' ') within group (order by column_value)
       into v_exist_sort
-      from table(l_exist);
+      from table(cast(l_exist as sys.odcivarchar2list));
 
     select listagg(column_value, ' ') within group (order by column_value)
       into v_input_sort
-      from table(l_input);
+      from table(cast(l_input as sys.odcivarchar2list));
 
-    /* ───────────── 유사도 계산 규칙 ───────────── */
-    if v_exist_unsort = v_input_unsort then            -- 순서까지 동일
+    ------------------------------------------------------------------
+    -- 유사도 계산
+    if v_exist_unsort = v_input_unsort then          -- 순서까지 동일
         v_sim := 100;
-    elsif v_exist_sort = v_input_sort then             -- 정렬만 동일
+    elsif v_exist_sort = v_input_sort then           -- 정렬만 동일
         v_sim := 99;
-    else                                               -- 부분 일치
+    else                                             -- 부분 일치
         v_sim := utl_match.edit_distance_similarity(
                      v_exist_sort, v_input_sort);
     end if;
 
-    /* 원문이 달라서 보정 */
+    -- 원본 문자열이 다르면 100 → 99 보정
     if v_sim = 100 and upper(p_exist) <> upper(p_input) then
         v_sim := 99;
     end if;
 
-    return v_sim;
+    return v_sim;                                    -- 단일 리턴
 end fn_similarity_pct;
 /
