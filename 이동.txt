@@ -1,47 +1,40 @@
--- 자재명 유사도(%) 계산 함수
---  · NULL 처리 : 파라미터 중 하나라도 NULL이면 0
---  · 공백·콤마·세미콜론을 구분자로 토큰화 후 특수문자 제거
---  · 대-소문자 무시(UPPER)·중복 토큰 제거·정렬 여부에 따라 100 / 99 결정
---  · 그 외에는 UTL_MATCH.edit_distance_similarity 사용
---  · 최종 100% 이더라도 원문이 다르면 99% 로 보정
 create or replace function fn_similarity_pct (
     p_exist in varchar2,
     p_input in varchar2
 ) return number
 as
-    -- 내부 변수
-    v_exist_clean   varchar2(4000);
+    /* ───────────────────────── 내부 변수 ───────────────────────── */
+    v_exist_clean   varchar2(4000);   -- 특수문자 제거 후 원본
     v_input_clean   varchar2(4000);
-    v_exist_unsort  varchar2(4000) := '';
+
+    v_exist_unsort  varchar2(4000) := ''; -- 토큰 순서 유지
     v_input_unsort  varchar2(4000) := '';
-    v_exist_sort    varchar2(4000);
+    v_exist_sort    varchar2(4000);       -- 토큰 정렬 후
     v_input_sort    varchar2(4000);
+
     v_token         varchar2(4000);
     v_idx           pls_integer;
     v_sim           number := 0;
 
-    -- 토큰 저장용 컬렉션
-    type t_tab is table of varchar2(4000);
-    l_exist t_tab := t_tab();
-    l_input t_tab := t_tab();
+    /* ── 토큰 저장용 컬렉션 : 스키마 수준 타입(SYS.ODCIVARCHAR2LIST) 사용 ── */
+    l_exist  sys.odcivarchar2list := sys.odcivarchar2list();
+    l_input  sys.odcivarchar2list := sys.odcivarchar2list();
 
-    -- 중복 검사 함수
-    function token_exists (l t_tab, val varchar2) return boolean is
+    /* 중복 토큰 체크 */
+    function token_exists (l sys.odcivarchar2list, val varchar2) return boolean is
     begin
         for i in 1 .. l.count loop
-            if l(i) = val then
-                return true;
-            end if;
+            if l(i) = val then return true; end if;
         end loop;
         return false;
     end token_exists;
 begin
-    -- NULL 이면 0
+    /* NULL 이면 0 */
     if p_exist is null or p_input is null then
         return 0;
     end if;
 
-    -- 구분자 통일(공백) 후 특수문자 제거 및 대문자 변환
+    /* 구분자 통일·특수문자 제거·대문자화 */
     v_exist_clean :=
         regexp_replace(
           regexp_replace(upper(replace(replace(p_exist, ',', ' '), ';', ' ')),
@@ -53,33 +46,29 @@ begin
                          '[^A-Z0-9가-힣一-龥 ]', ' '),
           ' +', ' ');
 
-    ------------------------------------------------------------------
-    -- 기존값 토큰 분해(순서 유지, 중복 제거)
+    /* ───────────── 기존값 토큰화 & 중복 제거 ───────────── */
     v_idx := 1;
     loop
         v_token := regexp_substr(v_exist_clean, '[^ ]+', 1, v_idx);
         exit when v_token is null;
         if not token_exists(l_exist, v_token) then
-            l_exist.extend;
-            l_exist(l_exist.count) := v_token;
+            l_exist.extend;  l_exist(l_exist.count) := v_token;
         end if;
         v_idx := v_idx + 1;
     end loop;
 
-    -- 입력값 토큰 분해
+    /* ───────────── 입력값 토큰화 & 중복 제거 ───────────── */
     v_idx := 1;
     loop
         v_token := regexp_substr(v_input_clean, '[^ ]+', 1, v_idx);
         exit when v_token is null;
         if not token_exists(l_input, v_token) then
-            l_input.extend;
-            l_input(l_input.count) := v_token;
+            l_input.extend;  l_input(l_input.count) := v_token;
         end if;
         v_idx := v_idx + 1;
     end loop;
 
-    ------------------------------------------------------------------
-    -- 순서 유지 문자열 조립
+    /* ───────────── 순서 유지 문자열 재조립 ───────────── */
     for i in 1 .. l_exist.count loop
         if i > 1 then v_exist_unsort := v_exist_unsort || ' '; end if;
         v_exist_unsort := v_exist_unsort || l_exist(i);
@@ -90,7 +79,7 @@ begin
         v_input_unsort := v_input_unsort || l_input(i);
     end loop;
 
-    -- 정렬 후 문자열 조립
+    /* ───────────── 토큰 정렬 후 문자열 재조립 ───────────── */
     select listagg(column_value, ' ') within group (order by column_value)
       into v_exist_sort
       from table(l_exist);
@@ -99,18 +88,17 @@ begin
       into v_input_sort
       from table(l_input);
 
-    ------------------------------------------------------------------
-    -- 유사도 계산
-    if v_exist_unsort = v_input_unsort then           -- 순서까지 동일
+    /* ───────────── 유사도 계산 규칙 ───────────── */
+    if v_exist_unsort = v_input_unsort then            -- 순서까지 동일
         v_sim := 100;
-    elsif v_exist_sort = v_input_sort then            -- 토큰 집합만 동일
+    elsif v_exist_sort = v_input_sort then             -- 정렬만 동일
         v_sim := 99;
-    else                                              -- 부분 일치
-        v_sim := utl_match.edit_distance_similarity(v_exist_sort,
-                                                    v_input_sort);
+    else                                               -- 부분 일치
+        v_sim := utl_match.edit_distance_similarity(
+                     v_exist_sort, v_input_sort);
     end if;
 
-    -- 원문 차이 보정
+    /* 원문이 달라서 보정 */
     if v_sim = 100 and upper(p_exist) <> upper(p_input) then
         v_sim := 99;
     end if;
