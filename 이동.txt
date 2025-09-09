@@ -1,531 +1,118 @@
-import javax.swing.*;
-import javax.swing.border.TitledBorder;
-import java.awt.*;
-import java.awt.event.*;
-import java.sql.*;
-import java.util.*;
-
-public class OracleTableCopyTool_J7_Where_Profile_DeleteFirst extends JFrame {
-    private ConnPanel srcPanel = new ConnPanel("1. 소스 접속정보");
-    private ConnPanel tgtPanel = new ConnPanel("2. 타겟 접속정보");
-
-    private JComboBox<String> ownerCombo = new JComboBox<String>();
-    private JButton loadDomainBtn = new JButton("도메인 새로고침");
-    private JPanel ownerPanel = new JPanel(new BorderLayout());
-
-    private JTextArea idArea = new JTextArea(6, 20);
-    private JTextField idColumnField = new JTextField("ID");
-    private JPanel idPanel = new JPanel(new BorderLayout());
-
-    private JTextArea tablesArea = new JTextArea(12, 20);
-    private JButton loadTablesBtn = new JButton("테이블 불러오기");
-    private JPanel tablesPanel = new JPanel(new BorderLayout());
-
-    private JTextField whereField = new JTextField();
-    private JPanel wherePanel = new JPanel(new BorderLayout());
-
-    private JButton runBtn = new JButton("7. 실행");
-    private JTextArea logArea = new JTextArea(12, 90);
-
-    private Connection srcConn;
-    private Connection tgtConn;
-
-    public OracleTableCopyTool_J7_Where_Profile_DeleteFirst() {
-        super("Oracle Table Copy Tool (JDK 1.7, WHERE, Profiles, Delete-then-Insert)");
-
-        JPanel topOwner = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        topOwner.add(new JLabel("3. 도메인(OWNER): "));
-        topOwner.add(ownerCombo);
-        topOwner.add(loadDomainBtn);
-        ownerPanel.setBorder(new TitledBorder("3. 도메인 선택"));
-        ownerPanel.add(topOwner, BorderLayout.NORTH);
-
-        JPanel idTop = new JPanel(new GridLayout(1, 2, 8, 0));
-        idTop.add(new JLabel("4. ID 입력(줄바꿈 구분)"));
-        JPanel idColP = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        idColP.add(new JLabel("ID 컬럼명:"));
-        idColumnField.setColumns(10);
-        idColP.add(idColumnField);
-        idTop.add(idColP);
-        idPanel.setBorder(new TitledBorder("4. ID 입력"));
-        idPanel.add(idTop, BorderLayout.NORTH);
-        idPanel.add(new JScrollPane(idArea), BorderLayout.CENTER);
-
-        JPanel tablesTop = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        tablesTop.add(new JLabel("5. 복사 대상 테이블(줄당 1개, 수정 가능)"));
-        tablesTop.add(loadTablesBtn);
-        tablesPanel.setBorder(new TitledBorder("5. 테이블"));
-        tablesPanel.add(tablesTop, BorderLayout.NORTH);
-        tablesPanel.add(new JScrollPane(tablesArea), BorderLayout.CENTER);
-
-        wherePanel.setBorder(new TitledBorder("6. select 공통 WHERE 조건 (옵션)"));
-        wherePanel.add(whereField, BorderLayout.CENTER);
-        whereField.setToolTipText("예) USE_YN='Y' AND CRT_DT>=DATE '2024-01-01'");
-
-        JPanel bottom = new JPanel(new BorderLayout());
-        JPanel runP = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        runP.add(runBtn);
-        bottom.add(runP, BorderLayout.NORTH);
-        logArea.setEditable(false);
-        bottom.add(new JScrollPane(logArea), BorderLayout.CENTER);
-        bottom.setBorder(new TitledBorder("실행 로그"));
-
-        JPanel north = new JPanel(new GridLayout(1,2,8,8));
-        north.add(srcPanel);
-        north.add(tgtPanel);
-
-        JPanel centerTop = new JPanel(new GridLayout(1,3,8,8));
-        centerTop.add(ownerPanel);
-        centerTop.add(idPanel);
-        centerTop.add(tablesPanel);
-
-        getContentPane().setLayout(new BorderLayout(8,8));
-        getContentPane().add(north, BorderLayout.NORTH);
-        getContentPane().add(centerTop, BorderLayout.CENTER);
-        getContentPane().add(wherePanel, BorderLayout.SOUTH);
-        getContentPane().add(bottom, BorderLayout.PAGE_END);
-
-        setDefaultCloseOperation(EXIT_ON_CLOSE);
-        setSize(1200, 860);
-        setLocationRelativeTo(null);
-
-        loadDomainBtn.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) { loadDomain(); }
-        });
-        loadTablesBtn.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) { loadTables(); }
-        });
-        runBtn.addActionListener(new ActionListener() {
-            public void actionPerformed(ActionEvent e) { runCopy(); }
-        });
-        addWindowListener(new WindowAdapter() {
-            public void windowClosing(WindowEvent e) {
-                closeQuietly(srcConn);
-                closeQuietly(tgtConn);
-            }
-        });
+private void copyRowsByIds(String owner, String table, String idCol, LinkedHashSet<String> ids) throws Exception {
+    ArrayList<String> cols = listColumns(owner, table);
+    if (!cols.contains(idCol)) {
+        throw new IllegalArgumentException("idCol(" + idCol + ") not found in table columns");
     }
 
-    // ===== 접속 패널(프로파일 포함) =====
-    static class ConnPanel extends JPanel {
-        static class ConnInfo { String host, port, service, user, pass;
-            ConnInfo(String h,String p,String s,String u,String pw){ host=h;port=p;service=s;user=u;pass=pw; }
-            ConnInfo(){ this("127.0.0.1","1521","XE","",""); } }
+    // 컬럼 문자열 구성
+    StringBuilder selCols = new StringBuilder();
+    StringBuilder insCols = new StringBuilder();
+    StringBuilder insQMarks = new StringBuilder();
+    for (int i = 0; i < cols.size(); i++) {
+        if (i > 0) { selCols.append(","); insCols.append(","); insQMarks.append(","); }
+        selCols.append("\"").append(cols.get(i)).append("\"");
+        insCols.append("\"").append(cols.get(i)).append("\"");
+        insQMarks.append("?");
+    }
 
-        JComboBox<String> profileCombo = new JComboBox<String>(new String[]{"운영","개발","로컬"});
-        JButton saveProfileBtn = new JButton("프로파일 저장");
+    // UPDATE SET 절(키 컬럼 제외)
+    StringBuilder updateSet = new StringBuilder();
+    for (int i = 0, u = 0; i < cols.size(); i++) {
+        String c = cols.get(i);
+        if (c.equals(idCol)) continue;
+        if (u++ > 0) updateSet.append(", ");
+        updateSet.append("\"").append(c).append("\" = ?");
+    }
 
-        JTextField host = new JTextField("127.0.0.1");
-        JTextField port = new JTextField("1521");
-        JTextField service = new JTextField("XE");
-        JTextField user = new JTextField();
-        JPasswordField pass = new JPasswordField();
+    // MERGE 문 구성 (Oracle)
+    // 파라미터 순서:
+    //  1) USING 절의 키 1개
+    //  2) UPDATE 절 값들 (키 제외 컬럼 순서대로)
+    //  3) INSERT 절 값들 (모든 컬럼 순서대로)
+    String mergeSql =
+        "MERGE INTO \"" + owner + "\".\"" + table + "\" tgt\n" +
+        "USING (SELECT ? AS \"" + idCol + "\" FROM dual) src\n" +
+        "ON (tgt.\"" + idCol + "\" = src.\"" + idCol + "\")\n" +
+        "WHEN MATCHED THEN UPDATE SET " + updateSet + "\n" +
+        "WHEN NOT MATCHED THEN INSERT (" + insCols + ")\n" +
+        "VALUES (" + insQMarks + ")";
 
-        JButton connectBtn = new JButton("연결");
-        JLabel status = new JLabel("미연결");
+    int total = 0;
+    PreparedStatement psMerge = null;
 
-        Map<String, ConnInfo> profiles = new HashMap<String, ConnInfo>();
-        Connection conn;
+    try {
+        psMerge = tgtConn.prepareStatement(mergeSql);
 
-        ConnPanel(String title) {
-            super(new GridBagLayout());
-            setBorder(new TitledBorder(title));
-            profiles.put("운영", new ConnInfo());
-            profiles.put("개발", new ConnInfo());
-            profiles.put("로컬", new ConnInfo());
+        ArrayList<String> idList = new ArrayList<>(ids);
+        ArrayList<ArrayList<String>> chunks = chunk(idList, 1000);
 
-            GridBagConstraints c = new GridBagConstraints();
-            c.insets = new Insets(2,2,2,2);
-            c.fill = GridBagConstraints.HORIZONTAL;
-            int r = 0;
+        for (int c = 0; c < chunks.size(); c++) {
+            ArrayList<String> chunkIds = chunks.get(c);
 
-            JPanel profLine = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-            profLine.add(new JLabel("프로파일:"));
-            profLine.add(profileCombo);
-            profLine.add(saveProfileBtn);
-            c.gridx=0; c.gridy=r; c.gridwidth=2; add(profLine, c); r++;
+            // 원본에서 대상 로우 선택
+            StringBuilder ph = new StringBuilder();
+            for (int i = 0; i < chunkIds.size(); i++) { if (i > 0) ph.append(","); ph.append("?"); }
 
-            addRow(c, r++, "Host", host);
-            addRow(c, r++, "Port", port);
-            addRow(c, r++, "Service/SID", service);
-            addRow(c, r++, "User", user);
-            addRow(c, r++, "Password", pass);
+            String select =
+                "SELECT " + selCols +
+                " FROM \"" + owner + "\".\"" + table + "\" WHERE \"" + idCol + "\" IN (" + ph + ")";
+            String whereFrag = buildWhereFragment(true);
+            if (whereFrag.length() > 0) select += whereFrag;
 
-            JPanel bottom = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            bottom.add(connectBtn); bottom.add(status);
-            c.gridx=0; c.gridy=r; c.gridwidth=2; add(bottom,c);
+            PreparedStatement psSel = null;
+            ResultSet rs = null;
+            int batch = 0;
 
-            profileCombo.addActionListener(new ActionListener() {
-                public void actionPerformed(ActionEvent e) { loadProfile((String)profileCombo.getSelectedItem()); }
-            });
-            saveProfileBtn.addActionListener(new ActionListener() {
-                public void actionPerformed(ActionEvent e) { saveCurrentToProfile((String)profileCombo.getSelectedItem()); }
-            });
-            connectBtn.addActionListener(new ActionListener() {
-                public void actionPerformed(ActionEvent e) { connect(); }
-            });
-
-            loadProfile("로컬");
-        }
-
-        private void addRow(GridBagConstraints c, int row, String label, JComponent comp){
-            c.gridx=0; c.gridy=row; c.gridwidth=1; add(new JLabel(label), c);
-            c.gridx=1; c.gridy=row; c.weightx=1.0; add(comp, c);
-        }
-        private void loadProfile(String name) {
-            ConnInfo ci = profiles.get(name);
-            if (ci == null) ci = new ConnInfo();
-            host.setText(ci.host); port.setText(ci.port); service.setText(ci.service);
-            user.setText(ci.user);  pass.setText(ci.pass);
-        }
-        private void saveCurrentToProfile(String name) {
-            ConnInfo ci = new ConnInfo(host.getText().trim(), port.getText().trim(),
-                    service.getText().trim(), user.getText().trim(), new String(pass.getPassword()));
-            profiles.put(name, ci);
-            JOptionPane.showMessageDialog(this, name + " 프로파일에 저장했습니다.");
-        }
-        private void connect() {
             try {
-                if (conn != null && !conn.isClosed()) conn.close();
-                Class.forName("oracle.jdbc.driver.OracleDriver");
-                String url = String.format("jdbc:oracle:thin:@//%s:%s/%s",
-                        host.getText().trim(), port.getText().trim(), service.getText().trim());
-                conn = DriverManager.getConnection(url, user.getText().trim(), new String(pass.getPassword()));
-                status.setText("연결됨"); status.setForeground(new Color(0,128,0));
-            } catch (Exception ex) {
-                status.setText("실패: " + ex.getMessage()); status.setForeground(Color.RED);
-                JOptionPane.showMessageDialog(this, "연결 실패: " + ex.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
-            }
-        }
-        Connection getConn() { return conn; }
-    }
+                psSel = srcConn.prepareStatement(select);
+                int idx = 1;
+                for (int i = 0; i < chunkIds.size(); i++) psSel.setString(idx++, chunkIds.get(i));
+                rs = psSel.executeQuery();
 
-    // ===== 기능 =====
-    private void loadDomain() {
-        try {
-            srcConn = srcPanel.getConn();
-            if (srcConn == null || srcConn.isClosed()) throw new IllegalStateException("소스 DB 먼저 연결하세요.");
-            ownerCombo.removeAllItems();
-            String sql = "SELECT USERNAME FROM ALL_USERS ORDER BY USERNAME";
-            PreparedStatement ps = null; ResultSet rs = null;
-            try {
-                ps = srcConn.prepareStatement(sql);
-                rs = ps.executeQuery();
-                while (rs.next()) ownerCombo.addItem(rs.getString(1));
-            } finally { closeQuietly(rs); closeQuietly(ps); }
-            log("도메인 목록 로드 완료.");
-        } catch (Exception e) { error(e); }
-    }
+                // 인덱스 헬퍼
+                int colCount = cols.size();
+                int idIndex = cols.indexOf(idCol); // 0-based(리스트), rs/getObject는 1-based
 
-    private void loadTables() {
-        try {
-            String owner = (String) ownerCombo.getSelectedItem();
-            if (owner == null) throw new IllegalStateException("도메인을 선택하세요.");
-            srcConn = srcPanel.getConn();
-            if (srcConn == null || srcConn.isClosed()) throw new IllegalStateException("소스 DB 먼저 연결하세요.");
+                while (rs.next()) {
+                    // 1) 키 바인딩 (USING)
+                    int p = 1;
+                    Object idVal = rs.getObject(idIndex + 1);
+                    psMerge.setObject(p++, idVal);
 
-            String sql = "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = ? ORDER BY TABLE_NAME";
-            PreparedStatement ps = null; ResultSet rs = null;
-            StringBuilder sb = new StringBuilder();
-            try {
-                ps = srcConn.prepareStatement(sql);
-                ps.setString(1, owner);
-                rs = ps.executeQuery();
-                while (rs.next()) sb.append(rs.getString(1)).append("\n");
-            } finally { closeQuietly(rs); closeQuietly(ps); }
-            tablesArea.setText(sb.toString());
-            log("테이블 목록 로드 완료 (수정 가능).");
-        } catch (Exception e) { error(e); }
-    }
-
-    private void runCopy() {
-        runBtn.setEnabled(false);
-        Thread t = new Thread(new Runnable() {
-            public void run() {
-                try {
-                    String owner = (String) ownerCombo.getSelectedItem();
-                    if (owner == null) throw new IllegalStateException("도메인을 선택하세요.");
-                    srcConn = srcPanel.getConn();
-                    tgtConn = tgtPanel.getConn();
-                    if (srcConn == null || srcConn.isClosed()) throw new IllegalStateException("소스 DB 연결 필요");
-                    if (tgtConn == null || tgtConn.isClosed()) throw new IllegalStateException("타겟 DB 연결 필요");
-
-                    ArrayList<String> tables = splitLines(tablesArea.getText());
-                    LinkedHashSet<String> ids = new LinkedHashSet<String>(splitLines(idArea.getText()));
-                    String idCol = idColumnField.getText().trim();
-                    boolean filterById = !ids.isEmpty();
-
-                    // 1) DELETE Phase: 목록 역순
-                    tgtConn.setAutoCommit(false);
-                    for (int i=tables.size()-1; i>=0; i--) {
-                        String table = tables.get(i);
-                        log("[DELETE] " + table);
-                        deleteExistingRows(owner, table, idCol, ids, filterById);
+                    // 2) UPDATE 값들 (키 제외, cols 순서)
+                    for (int i = 0; i < colCount; i++) {
+                        if (i == idIndex) continue;
+                        psMerge.setObject(p++, rs.getObject(i + 1));
                     }
-                    tgtConn.commit();
-                    log("삭제 완료 커밋.");
 
-                    // 2) INSERT Phase: 순방향
-                    for (int i=0; i<tables.size(); i++) {
-                        String table = tables.get(i);
-                        log("[INSERT] " + table);
-                        ensureTargetTableExists(owner, table);
-                        if (filterById) copyRowsByIds(owner, table, idCol, ids);
-                        else copyAllRows(owner, table);
-                        tgtConn.commit();
-                        log("완료: " + table);
+                    // 3) INSERT 값들 (모든 컬럼)
+                    for (int i = 0; i < colCount; i++) {
+                        psMerge.setObject(p++, rs.getObject(i + 1));
                     }
-                    log("모든 작업 완료.");
-                } catch (Exception e) {
-                    error(e);
-                    try { if (tgtConn != null) tgtConn.rollback(); } catch (Exception ignored) {}
-                } finally { runBtn.setEnabled(true); }
-            }
-        });
-        t.start();
-    }
 
-    // ===== DELETE 구현 (역순 호출됨) =====
-    private void deleteExistingRows(String owner, String table, String idCol,
-                                    LinkedHashSet<String> ids, boolean filterById) throws Exception {
-        if (filterById) {
-            ArrayList<String> idList = new ArrayList<String>(ids);
-            ArrayList<ArrayList<String>> chunks = chunk(idList, 1000);
-            int total = 0;
-            for (int c=0; c<chunks.size(); c++) {
-                ArrayList<String> chunkIds = chunks.get(c);
-                StringBuilder ph = new StringBuilder();
-                for (int i=0; i<chunkIds.size(); i++) { if (i>0) ph.append(","); ph.append("?"); }
+                    psMerge.addBatch();
+                    batch++;
 
-                String sql = "DELETE FROM \"" + owner + "\".\"" + table + "\" WHERE \"" + idCol + "\" IN (" + ph.toString() + ")";
-                String frag = buildWhereFragment(true); // 이미 WHERE 있음
-                if (frag.length() > 0) sql += frag;
-
-                PreparedStatement ps = null;
-                try {
-                    ps = tgtConn.prepareStatement(sql);
-                    int idx=1;
-                    for (int i=0; i<chunkIds.size(); i++) ps.setString(idx++, chunkIds.get(i));
-                    int cnt = ps.executeUpdate();
-                    total += cnt;
-                } finally { closeQuietly(ps); }
-            }
-            log("  삭제 건수(ID 기준): " + total);
-        } else {
-            String sql = "DELETE FROM \"" + owner + "\".\"" + table + "\"";
-            String frag = buildWhereFragment(false);
-            if (frag.length() > 0) sql += frag; // WHERE가 있으면 조건 삭제, 없으면 전체 삭제
-            PreparedStatement ps = null;
-            try {
-                ps = tgtConn.prepareStatement(sql);
-                int cnt = ps.executeUpdate();
-                log("  삭제 건수: " + cnt);
-            } finally { closeQuietly(ps); }
-        }
-    }
-
-    private void ensureTargetTableExists(String owner, String table) throws Exception {
-        if (targetTableExists(owner, table)) return;
-        String ddl = buildCreateTableDDL(srcConn, owner, table);
-        Statement st = null;
-        try { st = tgtConn.createStatement(); st.executeUpdate(ddl); }
-        finally { closeQuietly(st); }
-        log("타겟에 테이블 생성: " + table);
-    }
-
-    private boolean targetTableExists(String owner, String table) throws SQLException {
-        String sql = "SELECT COUNT(*) FROM ALL_TABLES WHERE OWNER = ? AND TABLE_NAME = ?";
-        PreparedStatement ps = null; ResultSet rs = null;
-        try {
-            ps = tgtConn.prepareStatement(sql);
-            ps.setString(1, owner); ps.setString(2, table);
-            rs = ps.executeQuery(); rs.next(); return rs.getInt(1) > 0;
-        } finally { closeQuietly(rs); closeQuietly(ps); }
-    }
-
-    private String buildCreateTableDDL(Connection conn, String owner, String table) throws SQLException {
-        String q = "SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, NULLABLE " +
-                   "FROM ALL_TAB_COLUMNS WHERE OWNER=? AND TABLE_NAME=? ORDER BY COLUMN_ID";
-        ArrayList<String> cols = new ArrayList<String>();
-        PreparedStatement ps = null; ResultSet rs = null;
-        try {
-            ps = conn.prepareStatement(q);
-            ps.setString(1, owner); ps.setString(2, table);
-            rs = ps.executeQuery();
-            while (rs.next()) {
-                String name = rs.getString("COLUMN_NAME");
-                String type = rs.getString("DATA_TYPE");
-                Integer len  = getNullableInt(rs, "DATA_LENGTH");
-                Integer prec = getNullableInt(rs, "DATA_PRECISION");
-                Integer scale = getNullableInt(rs, "DATA_SCALE");
-                String nullable = rs.getString("NULLABLE");
-
-                String def;
-                if ("NUMBER".equalsIgnoreCase(type)) {
-                    if (prec == null) def = "NUMBER";
-                    else if (scale == null) def = "NUMBER(" + prec + ")";
-                    else def = "NUMBER(" + prec + "," + scale + ")";
-                } else if ("VARCHAR2".equalsIgnoreCase(type) || "NVARCHAR2".equalsIgnoreCase(type) ||
-                           "CHAR".equalsIgnoreCase(type) || "NCHAR".equalsIgnoreCase(type)) {
-                    def = type + "(" + len + ")";
-                } else if ("DATE".equalsIgnoreCase(type)) def = "DATE";
-                else if (type != null && type.toUpperCase().startsWith("TIMESTAMP")) def = "TIMESTAMP";
-                else if ("CLOB".equalsIgnoreCase(type) || "NCLOB".equalsIgnoreCase(type) || "BLOB".equalsIgnoreCase(type)) def = type;
-                else def = type;
-                def = "\"" + name + "\" " + def + ("N".equalsIgnoreCase(nullable) ? " NOT NULL" : "");
-                cols.add(def.trim());
-            }
-        } finally { closeQuietly(rs); closeQuietly(ps); }
-
-        if (cols.isEmpty()) throw new SQLException("컬럼 메타데이터 없음: " + owner + "." + table);
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("CREATE TABLE \"").append(owner).append("\".\"").append(table).append("\" (\n  ");
-        for (int i=0; i<cols.size(); i++) { if (i>0) sb.append(",\n  "); sb.append(cols.get(i)); }
-        sb.append("\n)");
-        return sb.toString();
-    }
-
-    private Integer getNullableInt(ResultSet rs, String col) throws SQLException {
-        int v = rs.getInt(col); return rs.wasNull() ? null : Integer.valueOf(v);
-    }
-
-    private ArrayList<String> listColumns(String owner, String table) throws SQLException {
-        String q = "SELECT COLUMN_NAME FROM ALL_TAB_COLUMNS WHERE OWNER=? AND TABLE_NAME=? ORDER BY COLUMN_ID";
-        ArrayList<String> cols = new ArrayList<String>();
-        PreparedStatement ps = null; ResultSet rs = null;
-        try {
-            ps = srcConn.prepareStatement(q);
-            ps.setString(1, owner); ps.setString(2, table);
-            rs = ps.executeQuery();
-            while (rs.next()) cols.add(rs.getString(1));
-        } finally { closeQuietly(rs); closeQuietly(ps); }
-        return cols;
-    }
-
-    private void copyAllRows(String owner, String table) throws Exception {
-        ArrayList<String> cols = listColumns(owner, table);
-        StringBuilder selCols = new StringBuilder();
-        StringBuilder insCols = new StringBuilder();
-        StringBuilder qmarks = new StringBuilder();
-        for (int i=0; i<cols.size(); i++) {
-            if (i>0) { selCols.append(","); insCols.append(","); qmarks.append(","); }
-            selCols.append("\"").append(cols.get(i)).append("\"");
-            insCols.append("\"").append(cols.get(i)).append("\"");
-            qmarks.append("?");
-        }
-        String select = "SELECT " + selCols.toString() + " FROM \"" + owner + "\".\"" + table + "\"";
-        String whereFrag = buildWhereFragment(false);
-        if (whereFrag.length() > 0) select += whereFrag;
-
-        String insert = "INSERT /*+ APPEND */ INTO \"" + owner + "\".\"" + table + "\"(" + insCols.toString() +
-                        ") VALUES (" + qmarks.toString() + ")";
-
-        PreparedStatement psSel = null, psIns = null; ResultSet rs = null;
-        int batch = 0, total = 0;
-        try {
-            psSel = srcConn.prepareStatement(select);
-            rs = psSel.executeQuery();
-            psIns = tgtConn.prepareStatement(insert);
-            ResultSetMetaData md = rs.getMetaData();
-            int colCnt = md.getColumnCount();
-            while (rs.next()) {
-                for (int i=1;i<=colCnt;i++) psIns.setObject(i, rs.getObject(i));
-                psIns.addBatch(); batch++;
-                if (batch % 500 == 0) { int[] r = psIns.executeBatch(); total += r.length; batch=0; }
-            }
-            if (batch > 0) { int[] r = psIns.executeBatch(); total += r.length; }
-            log("  전체 복사 건수: " + total);
-        } finally { closeQuietly(rs); closeQuietly(psSel); closeQuietly(psIns); }
-    }
-
-    private void copyRowsByIds(String owner, String table, String idCol, LinkedHashSet<String> ids) throws Exception {
-        ArrayList<String> cols = listColumns(owner, table);
-        StringBuilder selCols = new StringBuilder();
-        StringBuilder insCols = new StringBuilder();
-        StringBuilder qmarksRow = new StringBuilder();
-        for (int i=0; i<cols.size(); i++) {
-            if (i>0) { selCols.append(","); insCols.append(","); qmarksRow.append(","); }
-            selCols.append("\"").append(cols.get(i)).append("\"");
-            insCols.append("\"").append(cols.get(i)).append("\"");
-            qmarksRow.append("?");
-        }
-        String insert = "INSERT INTO \"" + owner + "\".\"" + table + "\"(" + insCols.toString() +
-                        ") VALUES (" + qmarksRow.toString() + ")";
-
-        int total = 0;
-        PreparedStatement psIns = null;
-        try {
-            psIns = tgtConn.prepareStatement(insert);
-            ArrayList<String> idList = new ArrayList<String>(ids);
-            ArrayList<ArrayList<String>> chunks = chunk(idList, 1000);
-
-            for (int c=0; c<chunks.size(); c++) {
-                ArrayList<String> chunkIds = chunks.get(c);
-                StringBuilder ph = new StringBuilder();
-                for (int i=0; i<chunkIds.size(); i++) { if (i>0) ph.append(","); ph.append("?"); }
-
-                String select = "SELECT " + selCols.toString() + " FROM \"" + owner + "\".\"" + table +
-                        "\" WHERE \"" + idCol + "\" IN (" + ph.toString() + ")";
-                String whereFrag = buildWhereFragment(true);
-                if (whereFrag.length() > 0) select += whereFrag;
-
-                PreparedStatement psSel = null; ResultSet rs = null; int batch = 0;
-                try {
-                    psSel = srcConn.prepareStatement(select);
-                    int idx=1;
-                    for (int i=0; i<chunkIds.size(); i++) psSel.setString(idx++, chunkIds.get(i));
-                    rs = psSel.executeQuery();
-
-                    ResultSetMetaData md = rs.getMetaData();
-                    int colCnt = md.getColumnCount();
-                    while (rs.next()) {
-                        for (int i=1;i<=colCnt;i++) psIns.setObject(i, rs.getObject(i));
-                        psIns.addBatch(); batch++;
-                        if (batch % 500 == 0) { int[] r = psIns.executeBatch(); total += r.length; batch=0; }
+                    if (batch % 500 == 0) {
+                        int[] r = psMerge.executeBatch();
+                        total += r.length;
+                        batch = 0;
                     }
-                    if (batch > 0) { int[] r = psIns.executeBatch(); total += r.length; }
-                } finally { closeQuietly(rs); closeQuietly(psSel); }
+                }
+
+                if (batch > 0) {
+                    int[] r = psMerge.executeBatch();
+                    total += r.length;
+                }
+
+            } finally {
+                closeQuietly(rs);
+                closeQuietly(psSel);
             }
-        } finally { closeQuietly(psIns); }
-        log("  ID 기준 복사 건수: " + total);
-    }
-
-    private String buildWhereFragment(boolean alreadyHasWhere) {
-        String w = whereField.getText() == null ? "" : whereField.getText().trim();
-        if (w.length() == 0) return "";
-        if (alreadyHasWhere) return " AND (" + w + ")";
-        return " WHERE (" + w + ")";
-    }
-
-    // ===== 공통 유틸 =====
-    private static ArrayList<String> splitLines(String text) {
-        ArrayList<String> out = new ArrayList<String>();
-        if (text == null) return out;
-        String[] arr = text.split("\\r?\\n");
-        for (int i=0; i<arr.length; i++) {
-            String s = arr[i].trim();
-            if (s.length() > 0) out.add(s);
         }
-        return out;
+    } finally {
+        closeQuietly(psMerge);
     }
-    private static <T> ArrayList<ArrayList<T>> chunk(ArrayList<T> list, int size) {
-        ArrayList<ArrayList<T>> out = new ArrayList<ArrayList<T>>();
-        for (int i=0; i<list.size(); i+=size) {
-            ArrayList<T> sub = new ArrayList<T>(list.subList(i, Math.min(i+size, list.size())));
-            out.add(sub);
-        }
-        return out;
-    }
-    private void log(final String msg) {
-        SwingUtilities.invokeLater(new Runnable() { public void run() { logArea.append(msg + "\n"); } });
-    }
-    private void error(Exception e) { log("[오류] " + e.getMessage()); e.printStackTrace(); }
-    private static void closeQuietly(AutoCloseable c){ try{ if(c!=null) c.close(); } catch(Exception ignored){} }
 
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(new Runnable() {
-            public void run() { new OracleTableCopyTool_J7_Where_Profile_DeleteFirst().setVisible(true); }
-        });
-    }
+    log("  ID 기준 업서트(UPDATE/INSERT) 건수: " + total);
 }
