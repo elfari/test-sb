@@ -1,29 +1,26 @@
 ; ===== 사용자 설정 =====
 tsvn := "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe"  ; TortoiseProc.exe 경로 확인
 
-; ===== 전역 단축키 =====
-; Q-Dir 창에서만 동작하도록 컨텍스트 제한
-#HotIf WinActive("ahk_exe Q-Dir_x64.exe")  ; Q-Dir_x64.exe 기준 (32비트면 Q-Dir.exe로 바꿔주세요)
+; ===== Q-Dir에서만 동작 =====
+#HotIf WinActive("ahk_exe Q-Dir_x64.exe")  ; 32비트면 "Q-Dir.exe"로 변경
+^!u:: Tsvn_Update_CurrentOrSelection()
+^!c:: Tsvn_Commit_CurrentOrSelection()
+#HotIf
 
-^!u:: Tsvn_Update()
-^!c:: Tsvn_Commit()
-
-#HotIf  ; 컨텍스트 해제
-
-; ===== 메인 로직 =====
-Tsvn_Update() {
-    paths := QDir_GetTargets()
+; ===== 메인 =====
+Tsvn_Update_CurrentOrSelection() {
+    paths := QDir_Targets_PreferCurrentWhenEmpty()
     if (paths.Length=0) {
-        MsgBox "Q-Dir에서 항목을 선택하거나 탭/창을 활성화해 주세요."
+        MsgBox "경로를 얻지 못했습니다. Q-Dir 파일창 빈공간을 한 번 클릭한 뒤 다시 시도하세요."
         return
     }
     Run TortoiseCmd("update", paths)
 }
 
-Tsvn_Commit() {
-    paths := QDir_GetTargets()
+Tsvn_Commit_CurrentOrSelection() {
+    paths := QDir_Targets_PreferCurrentWhenEmpty()
     if (paths.Length=0) {
-        MsgBox "Q-Dir에서 항목을 선택하거나 탭/창을 활성화해 주세요."
+        MsgBox "경로를 얻지 못했습니다. Q-Dir 파일창 빈공간을 한 번 클릭한 뒤 다시 시도하세요."
         return
     }
     Run TortoiseCmd("commit", paths)
@@ -31,47 +28,91 @@ Tsvn_Commit() {
 
 TortoiseCmd(cmd, paths) {
     global tsvn
-    ; TortoiseSVN은 다중 경로를 * 로 연결
     joined := ""
     for i, p in paths
         joined .= (i>1 ? "*" : "") . p
-    ; /closeonend:1  성공 시 자동 닫기 (0,2,3으로 취향 설정 가능)
     return '"' tsvn '" /command:' cmd ' /path:"' joined '" /closeonend:1'
 }
 
-; ===== Q-Dir 선택/현재 폴더 경로 수집 =====
-QDir_GetTargets() {
-    ; 1) 현재 선택 항목의 전체 경로 복사 시도 (Ctrl+Shift+C)
-    ClipSaved := A_Clipboard
-    A_Clipboard := ""            ; 클립보드 초기화
-    Send "^+c"                   ; Q-Dir: Copy full path(s) without quotes
-    if !ClipWaitSmart(0.5) {     ; 0.5초 내 변화 없으면 다음 단계
-        ; 2) 선택이 없을 가능성 → 주소 표시줄 경로 복사 시도 (Alt+S → Ctrl+C)
-        Send "!s"
-        Sleep 40
-        Send "^c"
-        ClipWaitSmart(0.5)
-    }
-    text := A_Clipboard
-    A_Clipboard := ClipSaved     ; 클립보드 복원
+; ===== 대상 경로 결정 로직 =====
+QDir_Targets_PreferCurrentWhenEmpty() {
+    ; 1) 선택 항목 전체 경로 시도
+    sel := Try_CopySelectedFullPaths()
+    sel := NormalizeClipboardList(sel)
 
-    ; 수집/정리
-    if !text
-        return []
+    if (sel.Length > 0)            ; 선택이 있으면 선택 사용
+        return sel
 
-    lines := []
-    for raw in StrSplit(text, "`n", "`r")
-    {
-        p := Trim(raw, " `t`r`n""") ; 공백/탭/따옴표 제거
-        if (p != "")
-            lines.Push(p)
-    }
-    ; 중복 제거
-    return UniquePaths(lines)
+    ; 2) 선택이 없으면 = 빈공간 클릭한 상태로 간주 → 현재 폴더
+    cur := GetCurrentDir_FromAddressBarOrTitle()
+    if (cur != "")
+        return [cur]
+
+    return []  ; 실패
 }
 
-; ===== 유틸 =====
-ClipWaitSmart(timeoutSec := 0.5) {
+; ===== 경로 수집 유틸 =====
+Try_CopySelectedFullPaths() {
+    ClipSaved := A_Clipboard
+    A_Clipboard := ""
+    Send "^+c"                        ; Q-Dir 기본: 선택 항목 전체경로 복사(따옴표 없음)
+    ok := ClipWaitChanged(0.4)
+    out := ok ? A_Clipboard : ""
+    A_Clipboard := ClipSaved
+    return out
+}
+
+GetCurrentDir_FromAddressBarOrTitle() {
+    ; 주소표시줄 포커스 → 복사 → 실패 시 여러 키 시도 → 끝으로 창 제목 파싱
+    ClipSaved := A_Clipboard
+    A_Clipboard := ""
+
+    ; 주소표시줄 포커스 시도 후보키들 (환경별 다름)
+    keys := ["!s", "^l", "!d", "{F4}"]
+    for key in keys {
+        Send key
+        Sleep 60
+        Send "^c"
+        if ClipWaitChanged(0.4)
+            break
+    }
+
+    cur := A_Clipboard
+    A_Clipboard := ClipSaved
+
+    cur := Trim(cur, ' `t"')
+    if (cur != "")
+        return cur
+
+    ; 마지막 수단: 창 제목에서 [C:\...] 패턴 추출
+    title := WinGetTitle("A")
+    m := []
+    if RegExMatch(title, "\[([A-Za-z]:\\[^]]+)\](?!.*\[)", &m)
+        return m[1]
+    return ""
+}
+
+NormalizeClipboardList(text) {
+    out := []
+    if (text = "")
+        return out
+    for raw in StrSplit(text, "`n", "`r") {
+        p := Trim(raw, ' `t"')
+        if (p != "")
+            out.Push(p)
+    }
+    ; 중복 제거
+    seen := Map(), uniq := []
+    for p in out {
+        if !seen.Has(p) {
+            seen[p] := true
+            uniq.Push(p)
+        }
+    }
+    return uniq
+}
+
+ClipWaitChanged(timeoutSec := 0.4) {
     start := A_TickCount
     init := A_Clipboard
     while ((A_TickCount - start) < timeoutSec*1000) {
@@ -80,16 +121,4 @@ ClipWaitSmart(timeoutSec := 0.5) {
         Sleep 20
     }
     return (A_Clipboard != "" && A_Clipboard != init)
-}
-
-UniquePaths(arr) {
-    seen := Map(), out := []
-    for p in arr {
-        ; 경로 구분자 정리(필요시 추가 전처리)
-        if !seen.Has(p) {
-            seen[p] := true
-            out.Push(p)
-        }
-    }
-    return out
 }
