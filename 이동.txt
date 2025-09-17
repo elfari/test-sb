@@ -1,3 +1,58 @@
-Get-ChildItem "C:\work" -Recurse |
-  Where-Object { $_.LastWriteTime -ge '2025-01-01' -and $_.LastWriteTime -le '2025-09-01' } |
-  Select-Object FullName, LastWriteTime
+; --- 사용자 설정 ---
+tsvn := "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe"  ; TortoiseProc.exe 경로 확인
+
+; 단축키: Ctrl+Alt+U = Update, Ctrl+Alt+C = Commit
+^!u:: Tsvn_Update()
+^!c:: Tsvn_Commit()
+
+Tsvn_Update() {
+    paths := Explorer_GetTargets()
+    if (paths.Length=0) {
+        MsgBox "탐색기에서 폴더/파일을 선택하거나 해당 창을 활성화해 주세요."
+        return
+    }
+    Run TortoiseCmd("update", paths)
+}
+
+Tsvn_Commit() {
+    paths := Explorer_GetTargets()
+    if (paths.Length=0) {
+        MsgBox "탐색기에서 폴더/파일을 선택하거나 해당 창을 활성화해 주세요."
+        return
+    }
+    Run TortoiseCmd("commit", paths)
+}
+
+TortoiseCmd(cmd, paths) {
+    global tsvn
+    ; TortoiseSVN은 다중 경로를 * 로 연결
+    joined := ""
+    for i, p in paths
+        joined .= (i>1 ? "*" : "") . p
+    ; /closeonend:1  자동 닫기(성공 시), 0=안 닫음, 2=오류만 닫음 등 필요에 맞게 조정
+    return '"' tsvn '" /command:' cmd ' /path:"' joined '" /closeonend:1'
+}
+
+; 활성 탐색기 창의 선택 항목(없으면 현재 폴더)을 경로 배열로 반환
+Explorer_GetTargets() {
+    hwnd := WinActive("ahk_class CabinetWClass")
+    if !hwnd
+        return []
+    shell := ComObject("Shell.Application")
+    for window in shell.Windows {
+        try {
+            if (window.hwnd = hwnd) {
+                sel := window.Document.SelectedItems
+                result := []
+                if sel.Count {             ; 선택한 항목이 있으면 그 목록
+                    for item in sel
+                        result.Push(item.Path)
+                } else {                    ; 없으면 현재 폴더
+                    result.Push(window.Document.Folder.Self.Path)
+                }
+                return result
+            }
+        }
+    }
+    return []
+}
