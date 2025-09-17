@@ -1,23 +1,29 @@
-; --- 사용자 설정 ---
+; ===== 사용자 설정 =====
 tsvn := "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe"  ; TortoiseProc.exe 경로 확인
 
-; 단축키: Ctrl+Alt+U = Update, Ctrl+Alt+C = Commit
+; ===== 전역 단축키 =====
+; Q-Dir 창에서만 동작하도록 컨텍스트 제한
+#HotIf WinActive("ahk_exe Q-Dir_x64.exe")  ; Q-Dir_x64.exe 기준 (32비트면 Q-Dir.exe로 바꿔주세요)
+
 ^!u:: Tsvn_Update()
 ^!c:: Tsvn_Commit()
 
+#HotIf  ; 컨텍스트 해제
+
+; ===== 메인 로직 =====
 Tsvn_Update() {
-    paths := Explorer_GetTargets()
+    paths := QDir_GetTargets()
     if (paths.Length=0) {
-        MsgBox "탐색기에서 폴더/파일을 선택하거나 해당 창을 활성화해 주세요."
+        MsgBox "Q-Dir에서 항목을 선택하거나 탭/창을 활성화해 주세요."
         return
     }
     Run TortoiseCmd("update", paths)
 }
 
 Tsvn_Commit() {
-    paths := Explorer_GetTargets()
+    paths := QDir_GetTargets()
     if (paths.Length=0) {
-        MsgBox "탐색기에서 폴더/파일을 선택하거나 해당 창을 활성화해 주세요."
+        MsgBox "Q-Dir에서 항목을 선택하거나 탭/창을 활성화해 주세요."
         return
     }
     Run TortoiseCmd("commit", paths)
@@ -29,30 +35,61 @@ TortoiseCmd(cmd, paths) {
     joined := ""
     for i, p in paths
         joined .= (i>1 ? "*" : "") . p
-    ; /closeonend:1  자동 닫기(성공 시), 0=안 닫음, 2=오류만 닫음 등 필요에 맞게 조정
+    ; /closeonend:1  성공 시 자동 닫기 (0,2,3으로 취향 설정 가능)
     return '"' tsvn '" /command:' cmd ' /path:"' joined '" /closeonend:1'
 }
 
-; 활성 탐색기 창의 선택 항목(없으면 현재 폴더)을 경로 배열로 반환
-Explorer_GetTargets() {
-    hwnd := WinActive("ahk_class CabinetWClass")
-    if !hwnd
+; ===== Q-Dir 선택/현재 폴더 경로 수집 =====
+QDir_GetTargets() {
+    ; 1) 현재 선택 항목의 전체 경로 복사 시도 (Ctrl+Shift+C)
+    ClipSaved := A_Clipboard
+    A_Clipboard := ""            ; 클립보드 초기화
+    Send "^+c"                   ; Q-Dir: Copy full path(s) without quotes
+    if !ClipWaitSmart(0.5) {     ; 0.5초 내 변화 없으면 다음 단계
+        ; 2) 선택이 없을 가능성 → 주소 표시줄 경로 복사 시도 (Alt+S → Ctrl+C)
+        Send "!s"
+        Sleep 40
+        Send "^c"
+        ClipWaitSmart(0.5)
+    }
+    text := A_Clipboard
+    A_Clipboard := ClipSaved     ; 클립보드 복원
+
+    ; 수집/정리
+    if !text
         return []
-    shell := ComObject("Shell.Application")
-    for window in shell.Windows {
-        try {
-            if (window.hwnd = hwnd) {
-                sel := window.Document.SelectedItems
-                result := []
-                if sel.Count {             ; 선택한 항목이 있으면 그 목록
-                    for item in sel
-                        result.Push(item.Path)
-                } else {                    ; 없으면 현재 폴더
-                    result.Push(window.Document.Folder.Self.Path)
-                }
-                return result
-            }
+
+    lines := []
+    for raw in StrSplit(text, "`n", "`r")
+    {
+        p := Trim(raw, " `t`r`n""") ; 공백/탭/따옴표 제거
+        if (p != "")
+            lines.Push(p)
+    }
+    ; 중복 제거
+    return UniquePaths(lines)
+}
+
+; ===== 유틸 =====
+ClipWaitSmart(timeoutSec := 0.5) {
+    start := A_TickCount
+    init := A_Clipboard
+    while ((A_TickCount - start) < timeoutSec*1000) {
+        if (A_Clipboard != init && A_Clipboard != "")
+            return true
+        Sleep 20
+    }
+    return (A_Clipboard != "" && A_Clipboard != init)
+}
+
+UniquePaths(arr) {
+    seen := Map(), out := []
+    for p in arr {
+        ; 경로 구분자 정리(필요시 추가 전처리)
+        if !seen.Has(p) {
+            seen[p] := true
+            out.Push(p)
         }
     }
-    return []
+    return out
 }
