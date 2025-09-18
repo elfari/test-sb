@@ -1,34 +1,33 @@
 ; SVN Commit 단축키 (Ctrl+Alt+C)
-^!c::
+^!c:: {
     path := GetQDirPath()
-    if (path != "")
-        Run, "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe" /command:commit /path:"%path%"
-    return
+    if path != ""
+        Run('"C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe" /command:commit /path:"' path '"')
+}
 
 ; SVN Update 단축키 (Ctrl+Alt+U)
-^!u::
+^!u:: {
     path := GetQDirPath()
-    if (path != "")
-        Run, "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe" /command:update /path:"%path%"
-    return
+    if path != ""
+        Run('"C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe" /command:update /path:"' path '"')
+}
 
-
-; Q-Dir에서 경로 가져오기
+; Q-Dir에서 현재 선택된 경로나 폴더 가져오기
 GetQDirPath() {
-    oldClip := ClipboardAll
-    Clipboard := ""
-    Send, ^c
-    ClipWait, 0.5
-    selPath := Clipboard
-    Clipboard := oldClip
+    savedClip := A_Clipboard
+    A_Clipboard := ""
+    Send("^c")
+    ClipWait(0.5)
+
+    selPath := A_Clipboard
+    A_Clipboard := savedClip
 
     ; 선택한 파일/폴더가 없으면 (빈공간 상태) → 현재 경로 가져오기
-    if (selPath = "")
-    {
-        WinGetTitle, title, A
-        ; Q-Dir의 창 제목은 보통 "Q-Dir - C:\현재폴더" 형태
-        RegExMatch(title, " - (.*)$", m)
-        selPath := m1
+    if (selPath = "") {
+        WinGetTitle(&title, "A")
+        ; Q-Dir 제목에서 " - C:\..." 부분 추출
+        if RegExMatch(title, " - (.*)$", &m)
+            selPath := m[1]
     }
     return selPath
 }
