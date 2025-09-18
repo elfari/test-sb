@@ -1,124 +1,34 @@
-; ===== 사용자 설정 =====
-tsvn := "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe"  ; TortoiseProc.exe 경로 확인
+; SVN Commit 단축키 (Ctrl+Alt+C)
+^!c::
+    path := GetQDirPath()
+    if (path != "")
+        Run, "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe" /command:commit /path:"%path%"
+    return
 
-; ===== Q-Dir에서만 동작 =====
-#HotIf WinActive("ahk_exe Q-Dir_x64.exe")  ; 32비트면 "Q-Dir.exe"로 변경
-^!u:: Tsvn_Update_CurrentOrSelection()
-^!c:: Tsvn_Commit_CurrentOrSelection()
-#HotIf
+; SVN Update 단축키 (Ctrl+Alt+U)
+^!u::
+    path := GetQDirPath()
+    if (path != "")
+        Run, "C:\Program Files\TortoiseSVN\bin\TortoiseProc.exe" /command:update /path:"%path%"
+    return
 
-; ===== 메인 =====
-Tsvn_Update_CurrentOrSelection() {
-    paths := QDir_Targets_PreferCurrentWhenEmpty()
-    if (paths.Length=0) {
-        MsgBox "경로를 얻지 못했습니다. Q-Dir 파일창 빈공간을 한 번 클릭한 뒤 다시 시도하세요."
-        return
+
+; Q-Dir에서 경로 가져오기
+GetQDirPath() {
+    oldClip := ClipboardAll
+    Clipboard := ""
+    Send, ^c
+    ClipWait, 0.5
+    selPath := Clipboard
+    Clipboard := oldClip
+
+    ; 선택한 파일/폴더가 없으면 (빈공간 상태) → 현재 경로 가져오기
+    if (selPath = "")
+    {
+        WinGetTitle, title, A
+        ; Q-Dir의 창 제목은 보통 "Q-Dir - C:\현재폴더" 형태
+        RegExMatch(title, " - (.*)$", m)
+        selPath := m1
     }
-    Run TortoiseCmd("update", paths)
-}
-
-Tsvn_Commit_CurrentOrSelection() {
-    paths := QDir_Targets_PreferCurrentWhenEmpty()
-    if (paths.Length=0) {
-        MsgBox "경로를 얻지 못했습니다. Q-Dir 파일창 빈공간을 한 번 클릭한 뒤 다시 시도하세요."
-        return
-    }
-    Run TortoiseCmd("commit", paths)
-}
-
-TortoiseCmd(cmd, paths) {
-    global tsvn
-    joined := ""
-    for i, p in paths
-        joined .= (i>1 ? "*" : "") . p
-    return '"' tsvn '" /command:' cmd ' /path:"' joined '" /closeonend:1'
-}
-
-; ===== 대상 경로 결정 로직 =====
-QDir_Targets_PreferCurrentWhenEmpty() {
-    ; 1) 선택 항목 전체 경로 시도
-    sel := Try_CopySelectedFullPaths()
-    sel := NormalizeClipboardList(sel)
-
-    if (sel.Length > 0)            ; 선택이 있으면 선택 사용
-        return sel
-
-    ; 2) 선택이 없으면 = 빈공간 클릭한 상태로 간주 → 현재 폴더
-    cur := GetCurrentDir_FromAddressBarOrTitle()
-    if (cur != "")
-        return [cur]
-
-    return []  ; 실패
-}
-
-; ===== 경로 수집 유틸 =====
-Try_CopySelectedFullPaths() {
-    ClipSaved := A_Clipboard
-    A_Clipboard := ""
-    Send "^+c"                        ; Q-Dir 기본: 선택 항목 전체경로 복사(따옴표 없음)
-    ok := ClipWaitChanged(0.4)
-    out := ok ? A_Clipboard : ""
-    A_Clipboard := ClipSaved
-    return out
-}
-
-GetCurrentDir_FromAddressBarOrTitle() {
-    ; 주소표시줄 포커스 → 복사 → 실패 시 여러 키 시도 → 끝으로 창 제목 파싱
-    ClipSaved := A_Clipboard
-    A_Clipboard := ""
-
-    ; 주소표시줄 포커스 시도 후보키들 (환경별 다름)
-    keys := ["!s", "^l", "!d", "{F4}"]
-    for key in keys {
-        Send key
-        Sleep 60
-        Send "^c"
-        if ClipWaitChanged(0.4)
-            break
-    }
-
-    cur := A_Clipboard
-    A_Clipboard := ClipSaved
-
-    cur := Trim(cur, ' `t"')
-    if (cur != "")
-        return cur
-
-    ; 마지막 수단: 창 제목에서 [C:\...] 패턴 추출
-    title := WinGetTitle("A")
-    m := []
-    if RegExMatch(title, "\[([A-Za-z]:\\[^]]+)\](?!.*\[)", &m)
-        return m[1]
-    return ""
-}
-
-NormalizeClipboardList(text) {
-    out := []
-    if (text = "")
-        return out
-    for raw in StrSplit(text, "`n", "`r") {
-        p := Trim(raw, ' `t"')
-        if (p != "")
-            out.Push(p)
-    }
-    ; 중복 제거
-    seen := Map(), uniq := []
-    for p in out {
-        if !seen.Has(p) {
-            seen[p] := true
-            uniq.Push(p)
-        }
-    }
-    return uniq
-}
-
-ClipWaitChanged(timeoutSec := 0.4) {
-    start := A_TickCount
-    init := A_Clipboard
-    while ((A_TickCount - start) < timeoutSec*1000) {
-        if (A_Clipboard != init && A_Clipboard != "")
-            return true
-        Sleep 20
-    }
-    return (A_Clipboard != "" && A_Clipboard != init)
+    return selPath
 }
