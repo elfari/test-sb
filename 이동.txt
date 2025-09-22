@@ -1,109 +1,42 @@
-package agent;
+import os
 
-import org.objectweb.asm.*;
-
-import java.lang.instrument.ClassFileTransformer;
-import java.security.ProtectionDomain;
-import java.util.LinkedHashMap;
-import java.util.Map;
-
-public class StringReplaceTransformer implements ClassFileTransformer {
-    private final Map<String, String> replacements = new LinkedHashMap<String, String>();
-    private final String includePrefix;
-
-    public StringReplaceTransformer(String args, String includePrefix) {
-        // args 예: "tbwcore:admin,contenti:standard,codei:code"
-        if (args != null) {
-            String[] pairs = args.split(",");
-            for (String pair : pairs) {
-                String[] kv = pair.split(":", 2);
-                if (kv.length == 2) {
-                    replacements.put(kv[0], kv[1]);
-                }
-            }
-        }
-        this.includePrefix = includePrefix;
-    }
-
-    public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined,
-                            ProtectionDomain protectionDomain, byte[] classfileBuffer) {
-        if (className == null) return null;
-        if (!className.startsWith(includePrefix)) return null; // 우리 코드만 대상으로
-        if (className.startsWith("java/") || className.startsWith("javax/")
-            || className.startsWith("sun/")  || className.startsWith("com/sun/")) {
-            return null;
-        }
-
-        try {
-            ClassReader cr = new ClassReader(classfileBuffer);
-            ClassWriter cw = new ClassWriter(cr, 0);
-            ClassVisitor cv = new ClassVisitor(Opcodes.ASM5, cw) {
-
-                @Override
-                public FieldVisitor visitField(int access, String name, String desc, String sig, Object value) {
-                    if (value instanceof String && replacements.containsKey(value)) {
-                        return super.visitField(access, name, desc, sig, replacements.get(value));
-                    }
-                    return super.visitField(access, name, desc, sig, value);
-                }
-
-                @Override
-                public MethodVisitor visitMethod(int access, String name, String desc, String sig, String[] ex) {
-                    MethodVisitor mv = super.visitMethod(access, name, desc, sig, ex);
-                    return new MethodVisitor(Opcodes.ASM5, mv) {
-                        @Override
-                        public void visitLdcInsn(Object cst) {
-                            if (cst instanceof String && replacements.containsKey(cst)) {
-                                super.visitLdcInsn(replacements.get(cst));
-                            } else {
-                                super.visitLdcInsn(cst);
-                            }
-                        }
-                    };
-                }
-            };
-            cr.accept(cv, 0);
-            return cw.toByteArray();
-        } catch (Throwable t) {
-            return null;
-        }
-    }
+# 치환 목록
+replace_map = {
+    "contenti": "standard",
+    "tbwcore": "mdmadm"
 }
 
+# 검색할 루트 디렉터리
+root_dir = r"C:\temp"
 
+# 대상 확장자
+target_ext = [".java", ".jsp"]
 
-package agent;
+def process_file(file_path):
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-import java.lang.instrument.Instrumentation;
+        original_content = content
+        for old, new in replace_map.items():
+            content = content.replace(old, new)
 
-public class ReplaceAgent {
-    public static void premain(String args, Instrumentation inst) {
-        // 기본 값
-        String includePrefix = "com/yourco/";
+        if content != original_content:  # 변경이 발생했을 때만 저장
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"Updated: {file_path}")
+        else:
+            print(f"No changes: {file_path}")
 
-        // args 형식: "tbwcore:admin,contenti:standard,codei:code:com/yourco/"
-        String mapping = args;
-        if (args != null && args.contains(":") && args.lastIndexOf(":") > args.indexOf(",")) {
-            // 마지막 ':' 뒤 부분을 패키지 프리픽스로 간주
-            int idx = args.lastIndexOf(":");
-            includePrefix = args.substring(idx + 1);
-            mapping = args.substring(0, idx);
-        }
+    except Exception as e:
+        print(f"Error processing {file_path}: {e}")
 
-        StringReplaceTransformer t = new StringReplaceTransformer(mapping, includePrefix);
-        inst.addTransformer(t, true);
+def main():
+    for dirpath, _, filenames in os.walk(root_dir):
+        for filename in filenames:
+            if any(filename.lower().endswith(ext) for ext in target_ext):
+                file_path = os.path.join(dirpath, filename)
+                process_file(file_path)
 
-        if (inst.isRetransformClassesSupported()) {
-            for (Class<?> c : inst.getAllLoadedClasses()) {
-                try {
-                    if (inst.isModifiableClass(c)) {
-                        String name = c.getName().replace('.', '/');
-                        if (name.startsWith(includePrefix)) {
-                            inst.retransformClasses(c);
-                        }
-                    }
-                } catch (Throwable ignore) {}
-            }
-        }
-    }
-}
+if __name__ == "__main__":
+    main()
