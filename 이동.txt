@@ -1,47 +1,174 @@
-import os
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-# 치환 목록
-replace_map = {
-    "contenti": "standard",
-    "tbwcore": "mdmadm"
-}
+from __future__ import annotations
+import sys
+from pathlib import Path
+import shutil
+import tempfile
 
-# 검색할 디렉터리 목록
-search_dirs = [
-    r"C:\temp",
-    r"C:\workspace",
-    r"D:\projects"
+# ========= 사용자가 채우는 설정 =========
+DIRECTORIES = [
+    r"/path/to/dir1",
+    # r"/path/to/dir2",
 ]
 
-# 대상 확장자
-target_ext = [".java", ".jsp"]
+EXTENSIONS = [
+    "txt", "md", "log",
+    # "cfg", "conf", ...
+]
 
-def process_file(file_path):
+# 문자열 치환 규칙 (여러 개 가능)
+# 따옴표나 쌍따옴표를 포함해도 그대로 처리됩니다.
+REPLACEMENTS = [
+    {"from": '"hello"', "to": "'hello'"},
+    {"from": "OLD_VALUE", "to": "NEW_VALUE"},
+    # {"from": "'quoted'", "to": '"quoted"'},
+]
+
+# 안전장치 옵션
+DRY_RUN = True          # True: 미리보기(변경 안 함), False: 실제 변경
+MAKE_BACKUP = True      # True: 변경 전 <파일명>.bak 백업
+BACKUP_EXT = ".bak"     # 백업 확장자
+# ======================================
+
+ENCODING_CANDIDATES = ["utf-8-sig", "utf-8", "cp949", "euc-kr", "latin-1"]
+
+def should_process(file: Path, ext_set: set[str]) -> bool:
+    # 숨김/백업/바이너리로 보이는 확장자 등 간단 제외
+    if not file.is_file():
+        return False
+    if file.suffix.lower() == BACKUP_EXT.lower():
+        return False
+    # 확장자 필터 (점 없이 비교)
+    ext = file.suffix[1:].lower() if file.suffix.startswith(".") else file.suffix.lower()
+    return ext in ext_set
+
+def read_text_with_detection(p: Path) -> tuple[str, str]:
+    """여러 인코딩을 시도하여 텍스트를 읽고, 성공한 인코딩명을 함께 반환."""
+    data = p.read_bytes()
+    # 아주 단순한 바이너리 감지: NUL 포함 시 텍스트 처리 스킵
+    if b"\x00" in data:
+        raise UnicodeDecodeError("binary-like", b"", 0, 1, "NUL in file")
+    for enc in ENCODING_CANDIDATES:
+        try:
+            text = data.decode(enc)
+            return text, enc
+        except UnicodeDecodeError:
+            continue
+    # 마지막 수단: 실패로 처리
+    raise UnicodeDecodeError("unknown-encoding", b"", 0, 1, "No encoding matched")
+
+def write_text_atomic(p: Path, text: str, encoding: str) -> None:
+    # 원본 줄바꿈 스타일 보존: 기존 파일에서 추정
+    original_bytes = p.read_bytes()
+    if b"\r\n" in original_bytes and b"\n" in original_bytes:
+        # CRLF 존재: 윈도우 스타일 유지
+        newline = "\r\n"
+        text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+    elif b"\r\n" in original_bytes:
+        newline = "\r\n"
+        text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+    else:
+        # LF 기본
+        newline = "\n"
+        text = text.replace("\r\n", "\n")
+
+    # 원자적 쓰기 + 권한 보존
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding=encoding, newline="") as tmp:
+        tmp.write(text)
+        tmp_path = Path(tmp.name)
+    # 권한은 원본 기준 복사
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        shutil.copymode(p, tmp_path)
+    except Exception:
+        pass
+    tmp_path.replace(p)
 
-        original_content = content
-        for old, new in replace_map.items():
-            content = content.replace(old, new)
+def apply_replacements(text: str) -> tuple[str, int]:
+    """모든 치환 규칙을 순서대로 적용(단순 literal replace). 총 치환 횟수 반환."""
+    total = 0
+    new_text = text
+    for rule in REPLACEMENTS:
+        src = rule.get("from", "")
+        dst = rule.get("to", "")
+        if not isinstance(src, str) or not isinstance(dst, str):
+            raise ValueError("REPLACEMENTS 항목은 {'from': str, 'to': str} 형태여야 합니다.")
+        if src == "":
+            continue
+        count = new_text.count(src)
+        if count:
+            new_text = new_text.replace(src, dst)
+            total += count
+    return new_text, total
 
-        if content != original_content:  # 변경이 발생했을 때만 저장
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"Updated: {file_path}")
-        else:
-            print(f"No changes: {file_path}")
+def process_file(p: Path) -> tuple[bool, int, str]:
+    """파일 하나 처리. (변경여부, 치환횟수, 인코딩)"""
+    original_text, enc = read_text_with_detection(p)
+    new_text, cnt = apply_replacements(original_text)
+    if cnt == 0:
+        return False, 0, enc
 
-    except Exception as e:
-        print(f"Error processing {file_path}: {e}")
+    if DRY_RUN:
+        return False, cnt, enc
 
-def main():
-    for root_dir in search_dirs:
-        for dirpath, _, filenames in os.walk(root_dir):
-            for filename in filenames:
-                if any(filename.lower().endswith(ext) for ext in target_ext):
-                    file_path = os.path.join(dirpath, filename)
-                    process_file(file_path)
+    if MAKE_BACKUP:
+        backup = p.with_suffix(p.suffix + BACKUP_EXT)
+        if not backup.exists():
+            shutil.copy2(p, backup)
+
+    write_text_atomic(p, new_text, enc)
+    return True, cnt, enc
+
+def main() -> int:
+    if not DIRECTORIES:
+        print("[오류] DIRECTORIES가 비어 있습니다.")
+        return 2
+    ext_set = {e.lower().lstrip(".") for e in EXTENSIONS if e}
+    if not ext_set:
+        print("[오류] EXTENSIONS가 비어 있습니다.")
+        return 2
+    if not REPLACEMENTS:
+        print("[경고] REPLACEMENTS가 비어 있습니다. 변경 없이 종료될 수 있습니다.")
+
+    changed_files = 0
+    total_replacements = 0
+    scanned_files = 0
+
+    for d in DIRECTORIES:
+        base = Path(d)
+        if not base.exists():
+            print(f"[경고] 디렉토리 없음: {base}")
+            continue
+
+        for file in base.rglob("*"):
+            if not should_process(file, ext_set):
+                continue
+            scanned_files += 1
+            try:
+                changed, cnt, enc = process_file(file)
+                if cnt > 0:
+                    action = "수정" if (changed and not DRY_RUN) else "발견"
+                    print(f"[{action}] {file}  (+{cnt}회, {enc})")
+                    total_replacements += cnt
+                else:
+                    # 변화 없음은 굳이 출력 안 함
+                    pass
+            except UnicodeDecodeError:
+                # 바이너리/인코딩 불가 파일은 건너뜀
+                # 필요시 아래 주석 해제하여 로그 출력
+                # print(f"[건너뜀] 인코딩 판독 실패: {file}")
+                continue
+            except Exception as e:
+                print(f"[오류] {file}: {e}", file=sys.stderr)
+
+    mode = "DRY-RUN" if DRY_RUN else "실제 변경"
+    print(f"\n=== 완료 ({mode}) ===")
+    print(f"- 스캔한 파일: {scanned_files}")
+    print(f"- 총 치환 횟수: {total_replacements}")
+    print(f"- 변경된 파일: {changed_files} (DRY-RUN이면 0)")
+
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
