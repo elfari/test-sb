@@ -3,22 +3,22 @@
 interval := 9 * 60 * 1000 ; 9분(밀리초)
 
 DoAction(*) {
-    ; 마우스 1px 우->좌
-    MouseMove(1, 0, 0, true)
+    ; 현재 위치 기준으로 마우스 1px 우→좌 흔들기
+    MouseMove(1, 0, 0, true)   ; Speed=0, Relative=true
     Sleep(30)
     MouseMove(-1, 0, 0, true)
     Sleep(30)
 
-    ; Shift 키 누름/뗌
+    ; Shift 키 눌렀다 떼기
     Send("{Shift down}")
     Sleep(50)
     Send("{Shift up}")
 }
 
-; 9분마다 실행
+; 9분마다 반복 실행
 SetTimer(DoAction, interval)
 
-; 시작하자마자 한 번 실행 (원치 않으면 지우세요)
+; 실행 직후 1회 즉시 실행
 DoAction()
 
 ; 종료 단축키: Ctrl+Alt+X
