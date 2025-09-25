@@ -1,11 +1,25 @@
-def should_process(file: Path, ext_set: set[str]) -> bool:
-    if not file.is_file():
-        return False
-    if file.suffix.lower() == BACKUP_EXT.lower():
-        return False
-    # 파일명 제외 체크
-    if file.name.lower() in (name.lower() for name in EXCLUDE_FILENAMES):
-        return False
+#Requires AutoHotkey v2.0
+; 9분 = 540,000 밀리초
+interval := 540000
 
-    ext = file.suffix[1:].lower() if file.suffix.startswith(".") else file.suffix.lower()
-    return ext in ext_set
+; 타이머 설정 (interval 간격마다 DoAction 호출)
+SetTimer(Func("DoAction"), interval)
+
+; 프로그램 시작 시 한 번 즉시 실행(원치 않으면 이 줄 지우세요)
+DoAction()
+
+DoAction(*) {
+    ; 마우스 상대 이동: 오른쪽 1px, 약간 대기 후 왼쪽 1px
+    MouseMove(1, 0, 0, true)    ; 상대(x=+1, y=0)
+    Sleep 20
+    MouseMove(-1, 0, 0, true)   ; 상대(x=-1, y=0)
+    Sleep 20
+
+    ; Shift 키 한 번 누르고 떼기
+    Send("{Shift down}")
+    Sleep 30
+    Send("{Shift up}")
+}
+
+; 안전용 종료 단축키: Ctrl+Alt+X 누르면 종료
+^!x::ExitApp
