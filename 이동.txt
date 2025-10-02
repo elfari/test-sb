@@ -1,25 +1,33 @@
-#Requires AutoHotkey v2.0
+import os
+import shutil
 
-interval := 9 * 60 * 1000 ; 9분(밀리초)
+# 1. 복사할 파일 경로 배열
+file_list = [
+    r"C:\myapp\1.txt",
+    r"C:\myapp\test\2.txt"
+]
 
-DoAction(*) {
-    ; 현재 위치 기준으로 마우스 1px 우→좌 흔들기
-    MouseMove(1, 0, 0, true)   ; Speed=0, Relative=true
-    Sleep(30)
-    MouseMove(-1, 0, 0, true)
-    Sleep(30)
+# 2. 복사될 대상 디렉토리
+dest_dir = r"C:\myapp_copy"
 
-    ; Shift 키 눌렀다 떼기
-    Send("{Shift down}")
-    Sleep(50)
-    Send("{Shift up}")
-}
+# 복사 실행
+for file_path in file_list:
+    if not os.path.isfile(file_path):
+        print(f"파일 없음: {file_path}")
+        continue
 
-; 9분마다 반복 실행
-SetTimer(DoAction, interval)
+    # 원본 기준 디렉토리 (myapp)
+    base_dir = r"C:\myapp"
 
-; 실행 직후 1회 즉시 실행
-DoAction()
+    # 상대 경로 계산
+    rel_path = os.path.relpath(file_path, base_dir)
 
-; 종료 단축키: Ctrl+Alt+X
-^!x::ExitApp
+    # 대상 파일의 전체 경로
+    target_path = os.path.join(dest_dir, rel_path)
+
+    # 대상 디렉토리 생성
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+
+    # 파일 복사
+    shutil.copy2(file_path, target_path)
+    print(f"복사 완료: {file_path} -> {target_path}")
