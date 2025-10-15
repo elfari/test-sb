@@ -1,33 +1,66 @@
-import os
-import shutil
+import java.util.HashMap;
+import java.util.Map;
 
-# 1. 복사할 파일 경로 배열
-file_list = [
-    r"C:\myapp\1.txt",
-    r"C:\myapp\test\2.txt"
-]
+public class CustomClassLoader extends ClassLoader {
+    // 클래스명 매핑 테이블 (원래 이름 -> 변경된 이름)
+    private final Map<String, String> classNameMapping = new HashMap<>();
 
-# 2. 복사될 대상 디렉토리
-dest_dir = r"C:\myapp_copy"
+    public CustomClassLoader(ClassLoader parent) {
+        super(parent);
+        // 매핑 예시 추가 (실제 사용 시 동적으로 설정)
+        classNameMapping.put("com.example.Target", "com.example.Replaced");
+        // 추가 매핑: classNameMapping.put("old.Class", "new.Class");
+    }
 
-# 복사 실행
-for file_path in file_list:
-    if not os.path.isfile(file_path):
-        print(f"파일 없음: {file_path}")
-        continue
+    @Override
+    protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+        // 1. 이미 로드된 클래스 확인 (기본 로직 유지)
+        Class<?> loadedClass = findLoadedClass(name);
+        if (loadedClass != null) {
+            return loadedClass;
+        }
 
-    # 원본 기준 디렉토리 (myapp)
-    base_dir = r"C:\myapp"
+        // 2. 클래스명 변경 로직 적용
+        String mappedName = classNameMapping.getOrDefault(name, name);  // 매핑된 이름 가져오기
+        if (!mappedName.equals(name)) {
+            // 이름이 변경된 경우: 매핑된 이름으로 로드 시도
+            // System.out.println("Changing class name: " + name + " -> " + mappedName);  // 디버그 로그
+            try {
+                // 매핑된 클래스를 시스템 클래스 로더나 부모로부터 로드 (또는 findClass 호출)
+                Class<?> mappedClass = getParent().loadClass(mappedName);
+                if (resolve) {
+                    resolveClass(mappedClass);
+                }
+                return mappedClass;
+            } catch (ClassNotFoundException e) {
+                // 매핑된 클래스도 없으면 원래 이름으로 폴백
+                // throw e;  // 또는 커스텀 처리
+            }
+        }
 
-    # 상대 경로 계산
-    rel_path = os.path.relpath(file_path, base_dir)
+        // 3. 기본 로직: 부모 로더 위임 (시스템 클래스나 부트스트랩 클래스 처리)
+        try {
+            return super.loadClass(mappedName, resolve);  // 부모의 loadClass 호출 (변경된 이름 사용)
+        } catch (ClassNotFoundException e) {
+            // 부모에서 실패하면 findClass로 커스텀 로드 (예: 바이트코드 수정 시 필요)
+            // 여기서 추가 바이트코드 로직 구현 가능 (ASM 라이브러리 등으로 클래스 변형)
+            return findClass(mappedName);  // 오버라이드된 findClass 호출
+        }
+    }
 
-    # 대상 파일의 전체 경로
-    target_path = os.path.join(dest_dir, rel_path)
+    // 필요 시 findClass 오버라이드: 실제 클래스 바이트코드 로드 (파일, 네트워크 등에서)
+    @Override
+    protected Class<?> findClass(String name) throws ClassNotFoundException {
+        // 예: 파일에서 .class 바이트코드 읽어 정의 (기본 구현은 예외 던짐)
+        // byte[] classBytes = loadClassBytes(name);  // 커스텀 바이트 로드 메서드 구현
+        // return defineClass(name, classBytes, 0, classBytes.length);
+        throw new ClassNotFoundException("Custom loader: Class not found - " + name);
+    }
 
-    # 대상 디렉토리 생성
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
-
-    # 파일 복사
-    shutil.copy2(file_path, target_path)
-    print(f"복사 완료: {file_path} -> {target_path}")
+    // 사용 예시 (메인 메서드에서 테스트)
+    public static void main(String[] args) throws Exception {
+        CustomClassLoader loader = new CustomClassLoader(ClassLoader.getSystemClassLoader());
+        Class<?> clazz = loader.loadClass("com.example.Target");  // 내부적으로 com.example.Replaced 로드됨
+        System.out.println("Loaded class: " + clazz.getName());  // 출력: com.example.Replaced
+    }
+}
