@@ -1,22 +1,21 @@
 import os
 
-# ✅ 검색 대상 문자열
+# 검색 대상 키워드
 keywords = ["설비", "자재", "고객", "협력사", "사원", "조직"]
 
-# ✅ 검색 대상 확장자 (원하면 .py, .xml 등 추가 가능)
+# 검색 대상 확장자
 target_extensions = [".java", ".jsp"]
 
-# ✅ 검색할 디렉토리 경로 설정
+# 검색할 디렉토리 경로
 target_dir = "C:/path/to/your/directory"
 
 
 def search_files(base_dir, extensions, keywords):
     result_files = []
 
-    # 하위 폴더까지 순회
     for root, _, files in os.walk(base_dir):
         for file in files:
-            # 지정한 확장자 중 하나에 해당하면 검색
+            # 지정된 확장자만 검색
             if any(file.endswith(ext) for ext in extensions):
                 file_path = os.path.join(root, file)
 
@@ -24,13 +23,13 @@ def search_files(base_dir, extensions, keywords):
                     with open(file_path, "r", encoding="utf-8") as f:
                         content = f.read()
 
-                        # 포함된 키워드 개수 계산
-                        count = sum(1 for kw in keywords if kw in content)
+                        found_keywords = [kw for kw in keywords if kw in content]
+                        count = len(found_keywords)
 
                         if count >= 2:
-                            result_files.append((file_path, count))
+                            result_files.append((file_path, count, found_keywords))
                 except Exception as e:
-                    print(f"⚠️ 파일을 읽을 수 없습니다: {file_path} ({e})")
+                    print("파일을 읽을 수 없습니다:", file_path, "(", e, ")")
 
     return result_files
 
@@ -38,7 +37,13 @@ def search_files(base_dir, extensions, keywords):
 if __name__ == "__main__":
     matched_files = search_files(target_dir, target_extensions, keywords)
 
-    print(f"\n[검색 결과] 2개 이상 키워드 포함된 파일 목록\n{'=' * 60}")
-    for path, count in matched_files:
-        print(f"{path}  →  포함된 키워드 개수: {count}")
-    print(f"\n총 {len(matched_files)}개 파일이 조건에 해당합니다.")
+    print("\n검색 결과: 2개 이상 키워드가 포함된 파일 목록")
+    print("============================================================")
+
+    for path, count, found in matched_files:
+        print("파일:", path)
+        print("포함된 키워드 개수:", count)
+        print("포함된 키워드:", ", ".join(found))
+        print("------------------------------------------------------------")
+
+    print("총", len(matched_files), "개의 파일이 조건에 해당합니다.")
