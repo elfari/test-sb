@@ -1,4 +1,5 @@
 import os
+import csv
 
 # 검색 대상 키워드
 keywords = ["설비", "자재", "고객", "협력사", "사원", "조직"]
@@ -9,41 +10,46 @@ target_extensions = [".java", ".jsp"]
 # 검색할 디렉토리 경로
 target_dir = "C:/path/to/your/directory"
 
+# 결과 파일명
+output_csv = "multi_domain_search_result.csv"
+
 
 def search_files(base_dir, extensions, keywords):
-    result_files = []
+    result = []
 
     for root, _, files in os.walk(base_dir):
         for file in files:
-            # 지정된 확장자만 검색
             if any(file.endswith(ext) for ext in extensions):
                 file_path = os.path.join(root, file)
-
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         content = f.read()
-
-                        found_keywords = [kw for kw in keywords if kw in content]
-                        count = len(found_keywords)
-
-                        if count >= 2:
-                            result_files.append((file_path, count, found_keywords))
+                        found = [kw for kw in keywords if kw in content]
+                        if len(found) >= 2:
+                            result.append((file_path, len(found), ", ".join(found)))
                 except Exception as e:
                     print("파일을 읽을 수 없습니다:", file_path, "(", e, ")")
+    return result
 
-    return result_files
+
+def save_to_csv(rows, csv_path):
+    # 엑셀 호환을 위해 utf-8-sig 사용
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as fp:
+        writer = csv.writer(fp)
+        writer.writerow(["파일", "포함된키워드개수", "포함된키워드"])
+        for path, count, found_str in rows:
+            writer.writerow([path, count, found_str])
 
 
 if __name__ == "__main__":
-    matched_files = search_files(target_dir, target_extensions, keywords)
+    matched = search_files(target_dir, target_extensions, keywords)
 
-    print("\n검색 결과: 2개 이상 키워드가 포함된 파일 목록")
-    print("============================================================")
+    # 콘솔 출력 (요청하신 포맷)
+    print("파일,포함된키워드개수,포함된키워드")
+    for path, count, found_str in matched:
+        print("{},{},{}".format(path, count, found_str))
 
-    for path, count, found in matched_files:
-        print("파일:", path)
-        print("포함된 키워드 개수:", count)
-        print("포함된 키워드:", ", ".join(found))
-        print("------------------------------------------------------------")
-
-    print("총", len(matched_files), "개의 파일이 조건에 해당합니다.")
+    # CSV 저장
+    save_to_csv(matched, output_csv)
+    print("총", len(matched), "개의 파일이 조건에 해당합니다.")
+    print("결과 저장:", output_csv)
