@@ -1,66 +1,44 @@
-import java.util.HashMap;
-import java.util.Map;
+import os
 
-public class CustomClassLoader extends ClassLoader {
-    // 클래스명 매핑 테이블 (원래 이름 -> 변경된 이름)
-    private final Map<String, String> classNameMapping = new HashMap<>();
+# ✅ 검색 대상 문자열
+keywords = ["설비", "자재", "고객", "협력사", "사원", "조직"]
 
-    public CustomClassLoader(ClassLoader parent) {
-        super(parent);
-        // 매핑 예시 추가 (실제 사용 시 동적으로 설정)
-        classNameMapping.put("com.example.Target", "com.example.Replaced");
-        // 추가 매핑: classNameMapping.put("old.Class", "new.Class");
-    }
+# ✅ 검색 대상 확장자 (원하면 .py, .xml 등 추가 가능)
+target_extensions = [".java", ".jsp"]
 
-    @Override
-    protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-        // 1. 이미 로드된 클래스 확인 (기본 로직 유지)
-        Class<?> loadedClass = findLoadedClass(name);
-        if (loadedClass != null) {
-            return loadedClass;
-        }
+# ✅ 검색할 디렉토리 경로 설정
+target_dir = "C:/path/to/your/directory"
 
-        // 2. 클래스명 변경 로직 적용
-        String mappedName = classNameMapping.getOrDefault(name, name);  // 매핑된 이름 가져오기
-        if (!mappedName.equals(name)) {
-            // 이름이 변경된 경우: 매핑된 이름으로 로드 시도
-            // System.out.println("Changing class name: " + name + " -> " + mappedName);  // 디버그 로그
-            try {
-                // 매핑된 클래스를 시스템 클래스 로더나 부모로부터 로드 (또는 findClass 호출)
-                Class<?> mappedClass = getParent().loadClass(mappedName);
-                if (resolve) {
-                    resolveClass(mappedClass);
-                }
-                return mappedClass;
-            } catch (ClassNotFoundException e) {
-                // 매핑된 클래스도 없으면 원래 이름으로 폴백
-                // throw e;  // 또는 커스텀 처리
-            }
-        }
 
-        // 3. 기본 로직: 부모 로더 위임 (시스템 클래스나 부트스트랩 클래스 처리)
-        try {
-            return super.loadClass(mappedName, resolve);  // 부모의 loadClass 호출 (변경된 이름 사용)
-        } catch (ClassNotFoundException e) {
-            // 부모에서 실패하면 findClass로 커스텀 로드 (예: 바이트코드 수정 시 필요)
-            // 여기서 추가 바이트코드 로직 구현 가능 (ASM 라이브러리 등으로 클래스 변형)
-            return findClass(mappedName);  // 오버라이드된 findClass 호출
-        }
-    }
+def search_files(base_dir, extensions, keywords):
+    result_files = []
 
-    // 필요 시 findClass 오버라이드: 실제 클래스 바이트코드 로드 (파일, 네트워크 등에서)
-    @Override
-    protected Class<?> findClass(String name) throws ClassNotFoundException {
-        // 예: 파일에서 .class 바이트코드 읽어 정의 (기본 구현은 예외 던짐)
-        // byte[] classBytes = loadClassBytes(name);  // 커스텀 바이트 로드 메서드 구현
-        // return defineClass(name, classBytes, 0, classBytes.length);
-        throw new ClassNotFoundException("Custom loader: Class not found - " + name);
-    }
+    # 하위 폴더까지 순회
+    for root, _, files in os.walk(base_dir):
+        for file in files:
+            # 지정한 확장자 중 하나에 해당하면 검색
+            if any(file.endswith(ext) for ext in extensions):
+                file_path = os.path.join(root, file)
 
-    // 사용 예시 (메인 메서드에서 테스트)
-    public static void main(String[] args) throws Exception {
-        CustomClassLoader loader = new CustomClassLoader(ClassLoader.getSystemClassLoader());
-        Class<?> clazz = loader.loadClass("com.example.Target");  // 내부적으로 com.example.Replaced 로드됨
-        System.out.println("Loaded class: " + clazz.getName());  // 출력: com.example.Replaced
-    }
-}
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+
+                        # 포함된 키워드 개수 계산
+                        count = sum(1 for kw in keywords if kw in content)
+
+                        if count >= 2:
+                            result_files.append((file_path, count))
+                except Exception as e:
+                    print(f"⚠️ 파일을 읽을 수 없습니다: {file_path} ({e})")
+
+    return result_files
+
+
+if __name__ == "__main__":
+    matched_files = search_files(target_dir, target_extensions, keywords)
+
+    print(f"\n[검색 결과] 2개 이상 키워드 포함된 파일 목록\n{'=' * 60}")
+    for path, count in matched_files:
+        print(f"{path}  →  포함된 키워드 개수: {count}")
+    print(f"\n총 {len(matched_files)}개 파일이 조건에 해당합니다.")
