@@ -9,48 +9,47 @@ WITH needles AS (  -- 검색어 목록 정의
   SELECT LOWER('문자열8') FROM dual UNION ALL
   SELECT LOWER('문자열9') FROM dual
 ),
--- 프로시저 / 펑션 / 트리거 / 패키지 바디 소스 (내 스키마 기준)
+-- 코드 소스 (내 스키마 기준)
 code_src AS (
   SELECT name, type, TO_CLOB(text) AS text_clob
   FROM   user_source
   WHERE  type IN ('PROCEDURE','FUNCTION','TRIGGER','PACKAGE BODY')
 ),
--- 뷰 정의문 (DBMS_METADATA로 CLOB으로 추출)
+-- 뷰 소스 (DDL로 추출)
 view_src AS (
   SELECT view_name AS name,
          'VIEW' AS type,
          DBMS_METADATA.GET_DDL('VIEW', view_name) AS text_clob
   FROM   user_views
 ),
--- 코드 + 뷰 통합
+-- 통합 소스
 src AS (
   SELECT name, type, text_clob FROM code_src
   UNION ALL
   SELECT name, type, text_clob FROM view_src
 ),
--- (객체 × 검색어) 매트릭스에서 각 검색어 포함 여부 판단
+-- (객체 × 검색어) 매트릭스 → 포함 여부
 hits AS (
-  SELECT s.name, s.type, n.s,
+  SELECT s.name, s.type, n.s AS keyword,
          MAX(CASE WHEN INSTR(LOWER(s.text_clob), n.s) > 0 THEN 1 ELSE 0 END) AS hit
   FROM   src s
   CROSS  JOIN needles n
   GROUP  BY s.name, s.type, n.s
 ),
--- 객체별 일치 문자열 개수 합산
+-- 객체별 포함 문자열 집계
 agg AS (
-  SELECT name, type, SUM(hit) AS match_cnt
+  SELECT name,
+         type,
+         SUM(hit) AS match_cnt,
+         LISTAGG(keyword, ', ') WITHIN GROUP (ORDER BY keyword) AS matched_strings
   FROM   hits
+  WHERE  hit = 1
   GROUP  BY name, type
 )
--- 최종 결과: 2개 이상 일치
-SELECT name, type, match_cnt
+SELECT name,
+       type,
+       match_cnt,
+       matched_strings
 FROM   agg
 WHERE  match_cnt >= 2
 ORDER  BY match_cnt DESC, type, name;
-
-
-SELECT view_name AS name,
-       'VIEW' AS type,
-       TO_CLOB(text_vc) AS text_clob
-FROM   user_views
-WHERE  text_vc IS NOT NULL
