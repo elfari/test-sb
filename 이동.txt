@@ -1,7 +1,4 @@
--- 필요 시: 권한이 있어야 ALL_* 보임. 내 스키마만이면 ALL_* 대신 USER_* 사용 가능
--- 성능 위해 소유자(스키마) 필터 강추
-
-WITH needles AS (  -- 검색어 목록
+WITH needles AS (  -- 검색어 목록 정의
   SELECT LOWER('문자열1') s FROM dual UNION ALL
   SELECT LOWER('문자열2') FROM dual UNION ALL
   SELECT LOWER('문자열3') FROM dual UNION ALL
@@ -12,49 +9,48 @@ WITH needles AS (  -- 검색어 목록
   SELECT LOWER('문자열8') FROM dual UNION ALL
   SELECT LOWER('문자열9') FROM dual
 ),
--- 프로시저/펑션/트리거/패키지바디: 소스가 줄 단위 저장됨
+-- 프로시저 / 펑션 / 트리거 / 패키지 바디 소스 (내 스키마 기준)
 code_src AS (
-  SELECT owner, name, type, text
-  FROM   all_source
+  SELECT name, type, TO_CLOB(text) AS text_clob
+  FROM   user_source
   WHERE  type IN ('PROCEDURE','FUNCTION','TRIGGER','PACKAGE BODY')
-  -- AND owner = '스키마명'
 ),
--- 뷰 목록
-view_list AS (
-  SELECT owner, view_name
-  FROM   all_views
-  -- AND owner = '스키마명'
-),
--- 뷰 DDL을 CLOB으로 가져와 본문 검색 (TEXT가 LONG이라 함수 사용 제약 회피)
+-- 뷰 정의문 (DBMS_METADATA로 CLOB으로 추출)
 view_src AS (
-  SELECT v.owner,
-         v.view_name AS name,
-         'VIEW'      AS type,
-         DBMS_METADATA.GET_DDL('VIEW', v.view_name, v.owner) AS text
-  FROM   view_list v
+  SELECT view_name AS name,
+         'VIEW' AS type,
+         DBMS_METADATA.GET_DDL('VIEW', view_name) AS text_clob
+  FROM   user_views
 ),
--- 통합 소스
+-- 코드 + 뷰 통합
 src AS (
-  SELECT owner, name, type, text FROM code_src
+  SELECT name, type, text_clob FROM code_src
   UNION ALL
-  SELECT owner, name, type, text FROM view_src
+  SELECT name, type, text_clob FROM view_src
 ),
--- (객체 × 검색어) 매트릭스에서 해당 검색어가 단 1번이라도 나오면 hit=1
+-- (객체 × 검색어) 매트릭스에서 각 검색어 포함 여부 판단
 hits AS (
-  SELECT s.owner, s.name, s.type, n.s,
-         MAX(CASE WHEN INSTR(LOWER(s.text), n.s) > 0 THEN 1 ELSE 0 END) AS hit
+  SELECT s.name, s.type, n.s,
+         MAX(CASE WHEN INSTR(LOWER(s.text_clob), n.s) > 0 THEN 1 ELSE 0 END) AS hit
   FROM   src s
   CROSS  JOIN needles n
-  GROUP  BY s.owner, s.name, s.type, n.s
+  GROUP  BY s.name, s.type, n.s
 ),
--- 객체별 일치 검색어 개수 합계
+-- 객체별 일치 문자열 개수 합산
 agg AS (
-  SELECT owner, name, type, SUM(hit) AS match_cnt
+  SELECT name, type, SUM(hit) AS match_cnt
   FROM   hits
-  GROUP  BY owner, name, type
+  GROUP  BY name, type
 )
--- "2개 이상 포함" 필터링
-SELECT owner, name, type, match_cnt
+-- 최종 결과: 2개 이상 일치
+SELECT name, type, match_cnt
 FROM   agg
 WHERE  match_cnt >= 2
-ORDER  BY match_cnt DESC, owner, name;
+ORDER  BY match_cnt DESC, type, name;
+
+
+SELECT view_name AS name,
+       'VIEW' AS type,
+       TO_CLOB(text_vc) AS text_clob
+FROM   user_views
+WHERE  text_vc IS NOT NULL
