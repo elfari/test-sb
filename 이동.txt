@@ -1,55 +1,33 @@
-WITH needles AS (  -- 검색어 목록 정의
-  SELECT LOWER('문자열1') s FROM dual UNION ALL
-  SELECT LOWER('문자열2') FROM dual UNION ALL
-  SELECT LOWER('문자열3') FROM dual UNION ALL
-  SELECT LOWER('문자열4') FROM dual UNION ALL
-  SELECT LOWER('문자열5') FROM dual UNION ALL
-  SELECT LOWER('문자열6') FROM dual UNION ALL
-  SELECT LOWER('문자열7') FROM dual UNION ALL
-  SELECT LOWER('문자열8') FROM dual UNION ALL
-  SELECT LOWER('문자열9') FROM dual
-),
--- 코드 소스 (내 스키마 기준)
-code_src AS (
-  SELECT name, type, TO_CLOB(text) AS text_clob
-  FROM   user_source
-  WHERE  type IN ('PROCEDURE','FUNCTION','TRIGGER','PACKAGE BODY')
-),
--- 뷰 소스 (DDL로 추출)
-view_src AS (
-  SELECT view_name AS name,
-         'VIEW' AS type,
-         DBMS_METADATA.GET_DDL('VIEW', view_name) AS text_clob
-  FROM   user_views
-),
--- 통합 소스
-src AS (
-  SELECT name, type, text_clob FROM code_src
-  UNION ALL
-  SELECT name, type, text_clob FROM view_src
-),
--- (객체 × 검색어) 매트릭스 → 포함 여부
-hits AS (
-  SELECT s.name, s.type, n.s AS keyword,
-         MAX(CASE WHEN INSTR(LOWER(s.text_clob), n.s) > 0 THEN 1 ELSE 0 END) AS hit
-  FROM   src s
-  CROSS  JOIN needles n
-  GROUP  BY s.name, s.type, n.s
-),
--- 객체별 포함 문자열 집계
-agg AS (
-  SELECT name,
-         type,
-         SUM(hit) AS match_cnt,
-         LISTAGG(keyword, ', ') WITHIN GROUP (ORDER BY keyword) AS matched_strings
-  FROM   hits
-  WHERE  hit = 1
-  GROUP  BY name, type
-)
-SELECT name,
-       type,
-       match_cnt,
-       matched_strings
-FROM   agg
-WHERE  match_cnt >= 2
-ORDER  BY match_cnt DESC, type, name;
+SELECT 
+    s.type        AS object_type,
+    s.name        AS object_name,
+    s.line        AS line_no,
+    s.text        AS source_line
+FROM user_source s
+WHERE REGEXP_LIKE(s.text, 'CUSTOMER_ID', 'i')   -- 🔍 여기에 찾을 문자열 입력 (대소문자 무시)
+
+UNION ALL
+
+-- 뷰 정의 (4000자 이하)
+SELECT
+    'VIEW'        AS object_type,
+    v.view_name   AS object_name,
+    NULL          AS line_no,
+    v.text_vc     AS source_line
+FROM user_views v
+WHERE v.text_vc IS NOT NULL
+  AND REGEXP_LIKE(v.text_vc, 'CUSTOMER_ID', 'i')   -- 🔍 여기에 동일 문자열 입력
+
+UNION ALL
+
+-- 뷰 정의 (4000자 초과일 경우 DBMS_METADATA로 추출)
+SELECT
+    'VIEW'        AS object_type,
+    v.view_name   AS object_name,
+    NULL          AS line_no,
+    DBMS_METADATA.GET_DDL('VIEW', v.view_name) AS source_line
+FROM user_views v
+WHERE v.text_vc IS NULL
+  AND REGEXP_LIKE(DBMS_METADATA.GET_DDL('VIEW', v.view_name), 'CUSTOMER_ID', 'i')   -- 🔍 동일 문자열
+
+ORDER BY object_type, object_name, line_no;
