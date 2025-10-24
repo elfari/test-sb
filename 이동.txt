@@ -1,20 +1,36 @@
--- 'CUSTOMER_ID' → 찾을 문자열로 교체
 SELECT 
-    s.type        AS object_type,
-    s.name        AS object_name,
-    s.line        AS line_no,
-    s.text        AS source_line
-FROM user_source s
-WHERE REGEXP_LIKE(s.text, 'CUSTOMER_ID', 'i')
-
+    'PROCEDURE/FUNCTION/TRIGGER/PACKAGE' AS OBJECT_TYPE,
+    NAME AS OBJECT_NAME,
+    TYPE AS OBJECT_SUBTYPE,
+    LINE,
+    TEXT AS SOURCE_LINE
+FROM 
+    USER_SOURCE
+WHERE 
+    UPPER(TEXT) LIKE UPPER('%특정문자열%')
 UNION ALL
-
-SELECT
-    'VIEW'        AS object_type,
-    v.view_name   AS object_name,
-    NULL          AS line_no,
-    DBMS_METADATA.GET_DDL('VIEW', v.view_name, USER) AS source_line
-FROM user_views v
-WHERE REGEXP_LIKE(DBMS_METADATA.GET_DDL('VIEW', v.view_name, USER), 'CUSTOMER_ID', 'i')
-
-ORDER BY object_type, object_name, line_no;
+SELECT 
+    'VIEW' AS OBJECT_TYPE,
+    VIEW_NAME AS OBJECT_NAME,
+    'VIEW' AS OBJECT_SUBTYPE,
+    NULL AS LINE,
+    TEXT AS SOURCE_LINE
+FROM 
+    USER_VIEWS
+WHERE 
+    UPPER(TEXT) LIKE UPPER('%특정문자열%')
+    AND TEXT_LENGTH <= 4000
+UNION ALL
+SELECT 
+    'VIEW' AS OBJECT_TYPE,
+    VIEW_NAME AS OBJECT_NAME,
+    'VIEW' AS OBJECT_SUBTYPE,
+    NULL AS LINE,
+    DBMS_METADATA.GET_DDL('VIEW', VIEW_NAME) AS SOURCE_LINE
+FROM 
+    USER_VIEWS
+WHERE 
+    TEXT_LENGTH > 4000
+    AND UPPER(DBMS_METADATA.GET_DDL('VIEW', VIEW_NAME)) LIKE UPPER('%특정문자열%')
+ORDER BY 
+    OBJECT_TYPE, OBJECT_NAME, LINE;
