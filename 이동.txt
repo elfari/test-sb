@@ -1,33 +1,21 @@
+-- 특정 문자열('CUSTOMER_ID')이 포함된
+-- 프로시저 / 함수 / 패키지 / 트리거 / 뷰 소스 검색 (USER 스키마 기준)
 SELECT 
     s.type        AS object_type,
     s.name        AS object_name,
     s.line        AS line_no,
     s.text        AS source_line
 FROM user_source s
-WHERE REGEXP_LIKE(s.text, 'CUSTOMER_ID', 'i')   -- 🔍 여기에 찾을 문자열 입력 (대소문자 무시)
+WHERE REGEXP_LIKE(s.text, 'CUSTOMER_ID', 'i')
 
 UNION ALL
 
--- 뷰 정의 (4000자 이하)
-SELECT
-    'VIEW'        AS object_type,
-    v.view_name   AS object_name,
-    NULL          AS line_no,
-    v.text_vc     AS source_line
-FROM user_views v
-WHERE v.text_vc IS NOT NULL
-  AND REGEXP_LIKE(v.text_vc, 'CUSTOMER_ID', 'i')   -- 🔍 여기에 동일 문자열 입력
-
-UNION ALL
-
--- 뷰 정의 (4000자 초과일 경우 DBMS_METADATA로 추출)
 SELECT
     'VIEW'        AS object_type,
     v.view_name   AS object_name,
     NULL          AS line_no,
     DBMS_METADATA.GET_DDL('VIEW', v.view_name) AS source_line
 FROM user_views v
-WHERE v.text_vc IS NULL
-  AND REGEXP_LIKE(DBMS_METADATA.GET_DDL('VIEW', v.view_name), 'CUSTOMER_ID', 'i')   -- 🔍 동일 문자열
+WHERE REGEXP_LIKE(DBMS_METADATA.GET_DDL('VIEW', v.view_name), 'CUSTOMER_ID', 'i')
 
 ORDER BY object_type, object_name, line_no;
