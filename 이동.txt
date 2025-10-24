@@ -1,5 +1,4 @@
--- 특정 문자열('CUSTOMER_ID')이 포함된
--- 프로시저 / 함수 / 패키지 / 트리거 / 뷰 소스 검색 (USER 스키마 기준)
+-- 'CUSTOMER_ID' → 찾을 문자열로 교체
 SELECT 
     s.type        AS object_type,
     s.name        AS object_name,
@@ -14,8 +13,8 @@ SELECT
     'VIEW'        AS object_type,
     v.view_name   AS object_name,
     NULL          AS line_no,
-    DBMS_METADATA.GET_DDL('VIEW', v.view_name) AS source_line
+    DBMS_METADATA.GET_DDL('VIEW', v.view_name, USER) AS source_line
 FROM user_views v
-WHERE REGEXP_LIKE(DBMS_METADATA.GET_DDL('VIEW', v.view_name), 'CUSTOMER_ID', 'i')
+WHERE REGEXP_LIKE(DBMS_METADATA.GET_DDL('VIEW', v.view_name, USER), 'CUSTOMER_ID', 'i')
 
 ORDER BY object_type, object_name, line_no;
