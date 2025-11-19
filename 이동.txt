@@ -1,36 +1,13 @@
-SELECT 
-    'PROCEDURE/FUNCTION/TRIGGER/PACKAGE' AS OBJECT_TYPE,
-    NAME AS OBJECT_NAME,
-    TYPE AS OBJECT_SUBTYPE,
-    LINE,
-    TEXT AS SOURCE_LINE
-FROM 
-    USER_SOURCE
-WHERE 
-    UPPER(TEXT) LIKE UPPER('%특정문자열%')
-UNION ALL
-SELECT 
-    'VIEW' AS OBJECT_TYPE,
-    VIEW_NAME AS OBJECT_NAME,
-    'VIEW' AS OBJECT_SUBTYPE,
-    NULL AS LINE,
-    TEXT AS SOURCE_LINE
-FROM 
-    USER_VIEWS
-WHERE 
-    UPPER(TEXT) LIKE UPPER('%특정문자열%')
-    AND TEXT_LENGTH <= 4000
-UNION ALL
-SELECT 
-    'VIEW' AS OBJECT_TYPE,
-    VIEW_NAME AS OBJECT_NAME,
-    'VIEW' AS OBJECT_SUBTYPE,
-    NULL AS LINE,
-    DBMS_METADATA.GET_DDL('VIEW', VIEW_NAME) AS SOURCE_LINE
-FROM 
-    USER_VIEWS
-WHERE 
-    TEXT_LENGTH > 4000
-    AND UPPER(DBMS_METADATA.GET_DDL('VIEW', VIEW_NAME)) LIKE UPPER('%특정문자열%')
-ORDER BY 
-    OBJECT_TYPE, OBJECT_NAME, LINE;
+import os
+
+log_path = r"C:\temp\local.log"
+
+# 파일 존재 여부 체크 (선택사항)
+if not os.path.exists(log_path):
+    print(f"파일을 찾을 수 없습니다: {log_path}")
+else:
+    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+        for idx, line in enumerate(f, start=1):
+            lower_line = line.lower()
+            if "naviurl" in lower_line or "menuurl" in lower_line:
+                print(f"{idx}: {line.rstrip()}")
