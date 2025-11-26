@@ -1,37 +1,38 @@
-WITH Consecutive_User AS (
+WITH Consecutive_19 AS (
     SELECT
-        FLOWID,
-        SEQ,
-        VAL,
-        -- 1. FLOWID 내에서 SEQ 순서대로 순번 (전체 순번)
-        ROW_NUMBER() OVER (PARTITION BY FLOWID ORDER BY SEQ) AS RN,
-        -- 2. FLOWID와 VAL='USER'인 행 내에서 SEQ 순서대로 순번
-        ROW_NUMBER() OVER (PARTITION BY FLOWID, VAL ORDER BY SEQ) AS RN_VAL
+        PROCDEFID,
+        FLOWSEQ,
+        DECISIONID,
+        -- 1. PROCDEFID 내에서 FLOWSEQ 순서대로 순번 (전체 순번)
+        ROW_NUMBER() OVER (PARTITION BY PROCDEFID ORDER BY FLOWSEQ) AS RN,
+        -- 2. PROCDEFID와 DECISIONID='19'인 행 내에서 SEQ 순서대로 순번
+        ROW_NUMBER() OVER (PARTITION BY PROCDEFID, DECISIONID ORDER BY FLOWSEQ) AS RN_VAL
     FROM
         YourTableName  -- 실제 테이블 이름으로 변경하세요
     WHERE
-        VAL = 'USER' -- 찾고자 하는 문자열 값으로 변경
+        DECISIONID = 19 -- 찾고자 하는 숫자 값으로 필터링
 ),
-Grouped_User AS (
+Grouped_19 AS (
     SELECT
-        FLOWID,
-        SEQ,
-        VAL,
-        (RN - RN_VAL) AS GRP -- 연속되는 'USER' 그룹을 식별하는 Group ID
+        PROCDEFID,
+        FLOWSEQ,
+        DECISIONID,
+        (RN - RN_VAL) AS GRP -- 연속되는 '19' 그룹을 식별하는 Group ID
     FROM
-        Consecutive_User
+        Consecutive_19
 )
 SELECT
-    FLOWID,
-    -- LISTAGG 함수로 연속된 SEQ 값들을 콤마(,)로 연결
-    LISTAGG(SEQ, ',') WITHIN GROUP (ORDER BY SEQ) AS CONSECUTIVE_SEQS
+    PROCDEFID,
+    -- LISTAGG 함수로 연속된 FLOWSEQ 값들을 콤마(,)로 연결하여 보여줍니다.
+    LISTAGG(FLOWSEQ, ',') WITHIN GROUP (ORDER BY FLOWSEQ) AS CONSECUTIVE_FLOWSEQS,
+    COUNT(*) AS CONSECUTIVE_COUNT
 FROM
-    Grouped_User
+    Grouped_19
 GROUP BY
-    FLOWID,
+    PROCDEFID,
     GRP
 HAVING
-    COUNT(*) >= 3 -- 연속되는 횟수가 3 이상인 그룹만 선택
+    COUNT(*) >= 2 -- 연속되는 횟수가 2 이상인 그룹만 선택 (3개 이상을 원하시면 3으로 변경)
 ORDER BY
-    FLOWID,
-    MIN(SEQ);
+    PROCDEFID,
+    MIN(FLOWSEQ);
