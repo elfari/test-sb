@@ -1,13 +1,37 @@
-import os
-
-log_path = r"C:\temp\local.log"
-
-# 파일 존재 여부 체크 (선택사항)
-if not os.path.exists(log_path):
-    print(f"파일을 찾을 수 없습니다: {log_path}")
-else:
-    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-        for idx, line in enumerate(f, start=1):
-            lower_line = line.lower()
-            if "naviurl" in lower_line or "menuurl" in lower_line:
-                print(f"{idx}: {line.rstrip()}")
+WITH Consecutive_User AS (
+    SELECT
+        FLOWID,
+        SEQ,
+        VAL,
+        -- 1. FLOWID 내에서 SEQ 순서대로 순번 (전체 순번)
+        ROW_NUMBER() OVER (PARTITION BY FLOWID ORDER BY SEQ) AS RN,
+        -- 2. FLOWID와 VAL='USER'인 행 내에서 SEQ 순서대로 순번
+        ROW_NUMBER() OVER (PARTITION BY FLOWID, VAL ORDER BY SEQ) AS RN_VAL
+    FROM
+        YourTableName  -- 실제 테이블 이름으로 변경하세요
+    WHERE
+        VAL = 'USER' -- 찾고자 하는 문자열 값으로 변경
+),
+Grouped_User AS (
+    SELECT
+        FLOWID,
+        SEQ,
+        VAL,
+        (RN - RN_VAL) AS GRP -- 연속되는 'USER' 그룹을 식별하는 Group ID
+    FROM
+        Consecutive_User
+)
+SELECT
+    FLOWID,
+    -- LISTAGG 함수로 연속된 SEQ 값들을 콤마(,)로 연결
+    LISTAGG(SEQ, ',') WITHIN GROUP (ORDER BY SEQ) AS CONSECUTIVE_SEQS
+FROM
+    Grouped_User
+GROUP BY
+    FLOWID,
+    GRP
+HAVING
+    COUNT(*) >= 3 -- 연속되는 횟수가 3 이상인 그룹만 선택
+ORDER BY
+    FLOWID,
+    MIN(SEQ);
