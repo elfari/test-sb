@@ -1,38 +1,30 @@
-WITH Consecutive_19 AS (
-    SELECT
-        PROCDEFID,
-        FLOWSEQ,
-        DECISIONID,
-        -- 1. PROCDEFID 내에서 FLOWSEQ 순서대로 순번 (전체 순번)
-        ROW_NUMBER() OVER (PARTITION BY PROCDEFID ORDER BY FLOWSEQ) AS RN,
-        -- 2. PROCDEFID와 DECISIONID='19'인 행 내에서 SEQ 순서대로 순번
-        ROW_NUMBER() OVER (PARTITION BY PROCDEFID, DECISIONID ORDER BY FLOWSEQ) AS RN_VAL
-    FROM
-        YourTableName  -- 실제 테이블 이름으로 변경하세요
-    WHERE
-        DECISIONID = 19 -- 찾고자 하는 숫자 값으로 필터링
-),
-Grouped_19 AS (
-    SELECT
-        PROCDEFID,
-        FLOWSEQ,
-        DECISIONID,
-        (RN - RN_VAL) AS GRP -- 연속되는 '19' 그룹을 식별하는 Group ID
-    FROM
-        Consecutive_19
-)
 SELECT
-    PROCDEFID,
+    A.PROCDEFID,
     -- LISTAGG 함수로 연속된 FLOWSEQ 값들을 콤마(,)로 연결하여 보여줍니다.
-    LISTAGG(FLOWSEQ, ',') WITHIN GROUP (ORDER BY FLOWSEQ) AS CONSECUTIVE_FLOWSEQS,
+    LISTAGG(A.FLOWSEQ, ',') WITHIN GROUP (ORDER BY A.FLOWSEQ) AS CONSECUTIVE_FLOWSEQS,
     COUNT(*) AS CONSECUTIVE_COUNT
 FROM
-    Grouped_19
+    (
+        SELECT
+            PROCDEFID,
+            FLOWSEQ,
+            DECISIONID,
+            -- 연속되는 '19' 그룹을 식별하는 Group ID 생성
+            (
+                ROW_NUMBER() OVER (PARTITION BY PROCDEFID ORDER BY FLOWSEQ)
+                -
+                ROW_NUMBER() OVER (PARTITION BY PROCDEFID, DECISIONID ORDER BY FLOWSEQ)
+            ) AS GRP
+        FROM
+            YourTableName  -- 실제 테이블 이름으로 변경하세요
+        WHERE
+            DECISIONID = 19 -- 찾고자 하는 숫자 값으로 필터링
+    ) A
 GROUP BY
-    PROCDEFID,
-    GRP
+    A.PROCDEFID,
+    A.GRP
 HAVING
     COUNT(*) >= 2 -- 연속되는 횟수가 2 이상인 그룹만 선택 (3개 이상을 원하시면 3으로 변경)
 ORDER BY
-    PROCDEFID,
-    MIN(FLOWSEQ);
+    A.PROCDEFID,
+    MIN(A.FLOWSEQ);
