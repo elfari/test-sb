@@ -1,30 +1,164 @@
-SELECT
-    A.PROCDEFID,
-    -- LISTAGG 함수로 연속된 FLOWSEQ 값들을 콤마(,)로 연결하여 보여줍니다.
-    LISTAGG(A.FLOWSEQ, ',') WITHIN GROUP (ORDER BY A.FLOWSEQ) AS CONSECUTIVE_FLOWSEQS,
-    COUNT(*) AS CONSECUTIVE_COUNT
-FROM
-    (
-        SELECT
-            PROCDEFID,
-            FLOWSEQ,
-            DECISIONID,
-            -- 연속되는 '19' 그룹을 식별하는 Group ID 생성
-            (
-                ROW_NUMBER() OVER (PARTITION BY PROCDEFID ORDER BY FLOWSEQ)
-                -
-                ROW_NUMBER() OVER (PARTITION BY PROCDEFID, DECISIONID ORDER BY FLOWSEQ)
-            ) AS GRP
-        FROM
-            YourTableName  -- 실제 테이블 이름으로 변경하세요
-        WHERE
-            DECISIONID = 19 -- 찾고자 하는 숫자 값으로 필터링
-    ) A
-GROUP BY
-    A.PROCDEFID,
-    A.GRP
-HAVING
-    COUNT(*) >= 2 -- 연속되는 횟수가 2 이상인 그룹만 선택 (3개 이상을 원하시면 3으로 변경)
-ORDER BY
-    A.PROCDEFID,
-    MIN(A.FLOWSEQ);
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
+<%
+    // --- [백엔드 로직] 데이터 처리 영역 (이전과 동일) ---
+    request.setCharacterEncoding("UTF-8");
+    String action = request.getParameter("action");
+    
+    // 데이터 저장소 (서버 메모리 공유: application scope)
+    if ("save".equals(action)) {
+        String user = request.getParameter("user");
+        String text = request.getParameter("text");
+        if (user != null && text != null) {
+            application.setAttribute("clipboard_" + user, text);
+        }
+        return; // HTML 렌더링 중단
+    } else if ("load".equals(action)) {
+        String user = request.getParameter("user");
+        String text = (String) application.getAttribute("clipboard_" + user);
+        out.print(text == null ? "" : text);
+        return; // HTML 렌더링 중단
+    }
+%>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Simple VDI Clipboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        /* --- [스타일] (이전과 동일) --- */
+        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Malgun Gothic', sans-serif; }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 95vh;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+        #textArea {
+            flex: 1;
+            width: 100%;
+            border: 2px solid #007bff;
+            border-radius: 10px;
+            padding: 15px;
+            font-size: 16px;
+            resize: none;
+            box-sizing: border-box;
+            outline: none;
+        }
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 10px;
+            gap: 10px;
+        }
+        select {
+            padding: 10px;
+            border: 2px solid #007bff;
+            border-radius: 5px;
+            font-size: 16px;
+            width: 80px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        button {
+            padding: 10px 20px;
+            border: 2px solid #007bff;
+            background-color: white;
+            color: #007bff;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        button:hover {
+            background-color: #007bff;
+            color: white;
+        }
+        #btnSend {
+            background-color: #007bff;
+            color: white;
+            flex-grow: 1;
+            max-width: 150px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <textarea id="textArea" placeholder="여기에 텍스트를 입력하세요..."></textarea>
+        
+        <div class="controls">
+            <select id="userSelect">
+                <option value="A">User A</option>
+                <option value="B">User B</option>
+            </select>
+
+            <button id="btnLoad" onclick="loadText()">불러오기</button>
+
+            <button id="btnSend" onclick="sendText()">전송</button>
+        </div>
+    </div>
+
+    <script>
+        const textArea = document.getElementById('textArea');
+        const userSelect = document.getElementById('userSelect');
+        let lastLoadedText = "";
+
+        // [기능 4 & 필수요건] 텍스트 전송 (AJAX) - (이전과 동일)
+        function sendText() {
+            const text = textArea.value;
+            const user = userSelect.value;
+
+            fetch('clipboard.jsp?action=save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'user=' + encodeURIComponent(user) + '&text=' + encodeURIComponent(text)
+            })
+            .then(() => {
+                console.log("전송 완료");
+                lastLoadedText = text;
+            });
+        }
+
+        // [기능 3] 텍스트 불러오기 (AJAX) - (이전과 동일)
+        function loadText() {
+            const user = userSelect.value;
+
+            fetch('clipboard.jsp?action=load&user=' + encodeURIComponent(user))
+            .then(response => response.text())
+            .then(text => {
+                if (text !== lastLoadedText) {
+                    textArea.value = text.trim();
+                    lastLoadedText = text;
+                }
+            });
+        }
+
+        // ------------------------------------------------------------------
+        // [수정된 부분] 엔터 키 입력 시 바로 전송 & 줄바꿈 방지
+        // ------------------------------------------------------------------
+        textArea.addEventListener('keydown', function(e) {
+            // Enter 키만 감지
+            if (e.key === 'Enter') {
+                e.preventDefault(); // Enter 키의 기본 동작(줄바꿈) 막기
+                sendText();         // 즉시 전송 함수 호출
+            }
+        });
+
+        // [필수요건 대응] 자동 동기화 (1초마다 서버 상태 확인) - (이전과 동일)
+        setInterval(loadText, 1000);
+
+        // 사용자 변경 시 즉시 해당 사용자의 데이터 로드 - (이전과 동일)
+        userSelect.addEventListener('change', () => {
+            lastLoadedText = "";
+            loadText();
+        });
+
+        // 초기 로드 - (이전과 동일)
+        loadText();
+    </script>
+</body>
+</html>
