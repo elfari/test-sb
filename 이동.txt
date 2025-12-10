@@ -1,308 +1,231 @@
-<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" trimDirectiveWhitespaces="true" %>
-<%@ page import="java.util.Arrays" %>
-<%
-    // --- [백엔드 로직] 데이터 처리 영역 (JDK 1.7 호환) ---
-    request.setCharacterEncoding("UTF-8");
-    String action = request.getParameter("action");
-    
-    final int MAX_LINES = 10000;
-    final double DELETE_PERCENTAGE = 0.3;
+import threading
+import time
+import requests
+import pyperclip
+import keyboard
 
-    if ("save".equals(action)) {
-        String user = request.getParameter("user");
-        String text = request.getParameter("text");
-        
-        if (user != null && text != null) {
-            String existingText = (String) application.getAttribute("clipboard_" + user);
-            if (existingText != null) {
-                existingText = existingText.replaceFirst("^\\s*", "").replaceFirst("\\s*$", ""); // trim 대체
-            }
-            
-            text = text.replaceFirst("^\\s*", "").replaceFirst("\\s*$", ""); // trim 대체
-            
-            String newText;
-            if (existingText == null || existingText.isEmpty()) {
-                newText = text;
-            } else {
-                newText = existingText + "\n" + text; 
-            }
-            
-            String[] lines = newText.split("\\r?\\n"); 
-            
-            if (lines.length > MAX_LINES) {
-                int linesToDelete = (int) (lines.length * DELETE_PERCENTAGE);
-                if (linesToDelete == 0) linesToDelete = 1; 
+SERVER_URL = "http://1.2.3.4/share_clipboard.jsp"
 
-                String[] remainingLines = Arrays.copyOfRange(lines, linesToDelete, lines.length);
-                
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < remainingLines.length; i++) {
-                    if (i > 0) {
-                        sb.append("\n");
-                    }
-                    sb.append(remainingLines[i]);
-                }
-                newText = sb.toString();
-            }
-            
-            newText = newText.replaceFirst("^\\s*", "").replaceFirst("\\s*$", ""); // 최종 trim 대체
-            application.setAttribute("clipboard_" + user, newText);
+
+def send_to_server(user_id: str, text: str):
+    """
+    서버에 클립보드 텍스트 업로드
+    """
+    try:
+        data = {
+            "mode": "set",
+            "user_id": user_id,
+            "text": text
         }
+        # 타임아웃 짧게
+        resp = requests.post(SERVER_URL, data=data, timeout=3)
+        # 필요하면 resp.text 로 로그 찍을 수 있음
+        print(f"[INFO] 서버로 전송 완료 (len={len(text)})")
+    except Exception as e:
+        print(f"[WARN] 서버 전송 실패: {e}")
+
+
+def fetch_from_server(user_id: str) -> str | None:
+    """
+    서버에서 해당 user_id 의 텍스트 가져오기
+    """
+    try:
+        data = {
+            "mode": "get",
+            "user_id": user_id
+        }
+        resp = requests.post(SERVER_URL, data=data, timeout=3)
+        if resp.status_code == 200:
+            text = resp.text
+            if text is None:
+                return ""
+            return text
+        else:
+            print(f"[WARN] 서버 응답 코드: {resp.status_code}")
+            return None
+    except Exception as e:
+        print(f"[WARN] 서버 조회 실패: {e}")
+        return None
+
+
+def clipboard_watcher(user_id: str, poll_interval: float = 0.5):
+    """
+    클립보드가 변경될 때마다 서버에 자동 업로드.
+    CTRL+C 를 직접 후킹하지 않고, 클립보드 내용 변화를 감시하는 방식.
+    """
+    last_text = None
+    print("[INFO] 클립보드 감시 시작")
+
+    while True:
+        try:
+            # 현재 클립보드 내용
+            current = pyperclip.paste()
+        except Exception as e:
+            # 클립보드 접근 실패 시 잠깐 쉬었다가 다시
+            print(f"[WARN] 클립보드 읽기 실패: {e}")
+            time.sleep(poll_interval)
+            continue
+
+        # 문자열만 처리
+        if not isinstance(current, str):
+            current = ""
+
+        # 내용이 바뀌었고, 빈 문자열이 아니면 업로드
+        if current and current != last_text:
+            last_text = current
+            print(f"[INFO] 클립보드 변경 감지, 서버로 업로드")
+            send_to_server(user_id, current)
+
+        time.sleep(poll_interval)
+
+
+def install_paste_hotkey(user_id: str):
+    """
+    CTRL+V 를 후킹해서 서버에서 텍스트 받아와 붙여넣기.
+    - 단축키를 막고(suppress=True)
+    - 서버에서 텍스트 가져와 클립보드에 복사한 뒤
+    - 다시 프로그램이 'ctrl+v' 를 보내서 실제 붙여넣기 수행
+    """
+
+    def on_ctrl_v():
+        print("[INFO] CTRL+V 감지 → 서버에서 텍스트 가져오는 중...")
+        text = fetch_from_server(user_id)
+        if text is None:
+            print("[WARN] 서버에서 텍스트를 가져오지 못함")
+            return
+
+        # 가져온 텍스트를 클립보드에 넣기
+        try:
+            pyperclip.copy(text)
+            print(f"[INFO] 서버 텍스트를 클립보드에 설정 (len={len(text)})")
+        except Exception as e:
+            print(f"[WARN] 클립보드 쓰기 실패: {e}")
+            return
+
+        # 이제 실제 CTRL+V 를 한 번 보내서, 현재 포커스된 곳에 붙여넣기
+        keyboard.send("ctrl+v")
+
+    # suppress=True : 원래 CTRL+V 를 막고, 우리가 처리
+    keyboard.add_hotkey("ctrl+v", on_ctrl_v, suppress=True)
+    print("[INFO] CTRL+V 후킹 완료 (서버 텍스트 붙여넣기)")
+
+
+def choose_user_id() -> str:
+    """
+    사용자 ID 선택 (A/B)
+    """
+    while True:
+        user_id = input("사용자 ID 를 선택하세요 (A/B): ").strip().upper()
+        if user_id in ("A", "B"):
+            return user_id
+        print("A 또는 B 만 입력 가능합니다.")
+
+
+def main():
+    print("=== 클립보드 공유 프로그램 ===")
+    print("로컬PC와 VDI PC 모두에서 실행하고, 같은 사람은 같은 ID(A/B)를 사용하세요.")
+    user_id = choose_user_id()
+    print(f"[INFO] 선택된 사용자 ID: {user_id}")
+
+    # 1) 클립보드 감시 스레드 시작 (CTRL+C 후 자동 업로드)
+    watcher_thread = threading.Thread(
+        target=clipboard_watcher,
+        args=(user_id,),
+        daemon=True
+    )
+    watcher_thread.start()
+
+    # 2) CTRL+V 후킹 (붙여넣기 시 서버에서 가져와 붙여넣기)
+    install_paste_hotkey(user_id)
+
+    print("[INFO] 프로그램이 동작 중입니다. 종료하려면 CTRL+C 를 누르세요.")
+    # 키보드 이벤트 대기 (무한 대기)
+    try:
+        keyboard.wait()  # 아무 키나 대기
+    except KeyboardInterrupt:
+        print("\n[INFO] 프로그램 종료")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+<%@ page language="java" contentType="text/plain; charset=UTF-8" pageEncoding="UTF-8" %>
+<%
+    // -------------------------------
+    // 공통 설정
+    // -------------------------------
+    request.setCharacterEncoding("UTF-8");
+    response.setCharacterEncoding("UTF-8");
+    response.setContentType("text/plain; charset=UTF-8");
+
+    String mode   = request.getParameter("mode");
+    String userId = request.getParameter("user_id");
+
+    if (mode == null)  mode = "";
+    if (userId == null) userId = "";
+
+    mode   = mode.trim().toLowerCase();
+    userId = userId.trim().toUpperCase();
+
+    // user_id 검증 (A/B 외에는 에러)
+    if (!"A".equals(userId) && !"B".equals(userId)) {
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        out.print("INVALID_USER_ID");
         return;
-    } else if ("load".equals(action)) {
-        String user = request.getParameter("user");
-        String text = (String) application.getAttribute("clipboard_" + user);
-        out.print(text == null ? "" : text);
+    }
+
+    // application scope 에 저장할 key
+    // 예: clipboard_A, clipboard_B
+    String key = "clipboard_" + userId;
+
+    // -------------------------------
+    // mode = set : 텍스트 저장
+    // -------------------------------
+    if ("set".equals(mode)) {
+        String text = request.getParameter("text");
+        if (text == null) {
+            text = "";
+        }
+
+        // 동시성 고려해서 synchronized 사용
+        synchronized (application) {
+            application.setAttribute(key, text);
+        }
+
+        out.print("OK");
+        return;
+    }
+
+    // -------------------------------
+    // mode = get : 텍스트 조회
+    // -------------------------------
+    else if ("get".equals(mode)) {
+        String text;
+        synchronized (application) {
+            Object value = application.getAttribute(key);
+            if (value == null) {
+                text = "";
+            } else {
+                text = value.toString();
+            }
+        }
+
+        // 그냥 평문으로 텍스트 반환
+        out.print(text);
+        return;
+    }
+
+    // -------------------------------
+    // 잘못된 mode
+    // -------------------------------
+    else {
+        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+        out.print("INVALID_MODE");
         return;
     }
 %>
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Simple VDI Clipboard (IE7/8 Compatible)</title>
-    <meta http-equiv="X-UA-Compatible" content="IE=7"> 
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        /* --- [스타일] IE7/8 호환을 위해 flex 제거 및 float/width 기반으로 수정 --- */
-        body, html { margin: 0; padding: 0; height: 100%; font-family: 'Malgun Gothic', sans-serif; }
-        .container {
-            display: block; /* flex 제거 */
-            height: 95vh;
-            padding: 10px;
-            box-sizing: border-box;
-        }
-        #textArea {
-            width: 98%; /* flex 대체 */
-            height: 70%; /* flex 대체 */
-            border: 2px solid #007bff;
-            border-radius: 10px;
-            padding: 15px;
-            font-size: 16px;
-            resize: none;
-            box-sizing: border-box;
-            outline: none;
-            margin-bottom: 10px;
-        }
-        .info-message {
-            background-color: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeeba;
-            padding: 8px 15px;
-            margin-bottom: 10px;
-            border-radius: 5px;
-            font-size: 14px;
-            font-weight: bold;
-        }
-        .controls {
-            display: block; 
-            margin-top: 10px;
-            overflow: hidden;
-        }
-        .controls > * {
-            float: left;
-            margin-right: 10px;
-        }
-        select, button {
-            padding: 10px 20px;
-            border: 2px solid #007bff;
-            font-size: 16px;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-        #btnSend {
-            background-color: #007bff;
-            color: white;
-            float: right;
-        }
-        /* --- 토스트 메시지 스타일 (IE7/8 호환 투명도 적용) --- */
-        #toastMessage {
-            visibility: hidden;
-            min-width: 250px;
-            background-color: #333; /* IE7/8에서 filter:alpha와 함께 쓰기 위해 단색으로 변경 */
-            filter: alpha(opacity=70); /* IE7/8 투명도 70% */
-            color: #fff;
-            text-align: center;
-            border-radius: 10px; 
-            padding: 16px;
-            position: fixed;
-            z-index: 9999;
-            left: 50%;
-            bottom: 30px;
-            margin-left: -125px; /* 중앙 정렬 (transform 대체) */
-            font-size: 17px;
-            opacity: 0;
-            filter: alpha(opacity=0); 
-        }
-        
-        #toastMessage.show {
-            visibility: visible;
-            opacity: 1;
-            filter: alpha(opacity=100); 
-        }
-    </style>
-</head>
-<body>
-
-    <div class="container">
-        <div class="info-message">
-            ⚠️ **최대 1만 라인**까지 저장되며 (초과 시 오래된 내용 30% 삭제), 서버 재시작 시 **데이터는 삭제**됩니다.
-        </div>
-
-        <textarea id="textArea" placeholder="여기에 텍스트를 입력하세요. 엔터(Enter)를 누르면 바로 전송됩니다."></textarea>
-        
-        <div class="controls">
-            <select id="userSelect">
-                <option value="A">User A</option>
-                <option value="B">User B</option>
-            </select>
-
-            <button id="btnLoad" onclick="loadText()">불러오기</button>
-            <button id="btnSend" onclick="sendText()">전송</button>
-        </div>
-    </div>
-    
-    <div id="toastMessage"></div>
-
-    <script type="text/javascript">
-        // --- [JavaScript] IE7/8 호환을 위한 변경 ---
-        var textArea = document.getElementById('textArea');
-        var userSelect = document.getElementById('userSelect');
-        var toastMessage = document.getElementById('toastMessage');
-        var lastLoadedText = "";
-        
-        // IE7/8 호환: XMLHttpRequest 객체 생성 함수
-        function createXhr() {
-            if (window.XMLHttpRequest) {
-                return new XMLHttpRequest();
-            } else if (window.ActiveXObject) {
-                try {
-                    return new ActiveXObject("Msxml2.XMLHTTP");
-                } catch (e) {
-                    try {
-                        return new ActiveXObject("Microsoft.XMLHTTP");
-                    } catch (e) {
-                        return null;
-                    }
-                }
-            }
-            return null;
-        }
-
-        // 토스트 메시지 함수
-        function showToast(message) {
-            toastMessage.innerHTML = message;
-            toastMessage.className = "show";
-            
-            setTimeout(function() { 
-                toastMessage.className = toastMessage.className.replace("show", ""); 
-            }, 2500);
-        }
-
-        // 전송 함수 (fetch 대신 AJAX 사용)
-        function sendText() {
-            var text = textArea.value; 
-            var user = userSelect.value;
-            
-            text = text.replace(/^\s+|\s+$/g, ''); // trim() 대체
-            
-            if (text === "") return; 
-
-            textArea.value = ""; 
-
-            var xhr = createXhr();
-            if (!xhr) {
-                alert("AJAX를 사용할 수 없는 브라우저입니다.");
-                return;
-            }
-            
-            var url = 'clipboard.jsp?action=save';
-            var params = 'user=' + encodeURIComponent(user) + '&text=' + encodeURIComponent(text);
-            
-            xhr.open('POST', url, true);
-            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-            
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4 && xhr.status === 200) {
-                    showToast("✅ 전송 완료");
-                    loadText(true); 
-                }
-            };
-            
-            xhr.send(params);
-        }
-
-        // 불러오기 함수 (fetch 대신 AJAX 사용)
-        function loadText(forceUpdate) {
-            var user = userSelect.value;
-
-            var xhr = createXhr();
-            if (!xhr) {
-                alert("AJAX를 사용할 수 없는 브라우저입니다.");
-                return;
-            }
-            
-            var url = 'clipboard.jsp?action=load&user=' + encodeURIComponent(user) + '&_=' + new Date().getTime();
-            
-            xhr.open('GET', url, true);
-            
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4 && xhr.status === 200) {
-                    var text = xhr.responseText;
-                    
-                    var trimmedText = text.replace(/^\s+|\s+$/g, ''); // trim() 대체
-
-                    if (trimmedText !== lastLoadedText || forceUpdate) {
-                        textArea.value = trimmedText;
-                        
-                        if (trimmedText !== lastLoadedText && !forceUpdate) {
-                           showToast("🔄 불러오기 완료 (자동 동기화)");
-                        } else if (forceUpdate) {
-                           showToast("🔄 불러오기 완료");
-                        }
-                        
-                        lastLoadedText = trimmedText;
-                    }
-                }
-            };
-            
-            xhr.send(null);
-        }
-
-        // 이벤트 리스너 (addEventListener 대신 attachEvent 사용)
-        if (textArea.addEventListener) { // 표준
-            textArea.addEventListener('keydown', function(e) {
-                if (e.keyCode === 13) {
-                    e.preventDefault();
-                    sendText();
-                }
-            }, false);
-        } else if (textArea.attachEvent) { // IE7/8
-            textArea.attachEvent('onkeydown', function(e) {
-                if (window.event.keyCode === 13) {
-                    window.event.returnValue = false; 
-                    sendText();
-                }
-            });
-        }
-        
-        if (userSelect.addEventListener) { // 표준
-             userSelect.addEventListener('change', function() {
-                lastLoadedText = "";
-                loadText(true);
-            }, false);
-        } else if (userSelect.attachEvent) { // IE7/8
-            userSelect.attachEvent('onchange', function() {
-                lastLoadedText = "";
-                loadText(true);
-            });
-        }
-
-        // 자동 동기화
-        setInterval(loadText, 1000);
-
-        // 초기 로드
-        loadText(true);
-    </script>
-</body>
-</html>
