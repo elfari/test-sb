@@ -1,7 +1,7 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" trimDirectiveWhitespaces="true" %>
 <%@ page import="java.util.Arrays" %>
 <%
-    // --- [백엔드 로직] 데이터 처리 영역 (JDK 1.7 호환, 변경 없음) ---
+    // --- [백엔드 로직] 데이터 처리 영역 (JDK 1.7 호환) ---
     request.setCharacterEncoding("UTF-8");
     String action = request.getParameter("action");
     
@@ -15,10 +15,10 @@
         if (user != null && text != null) {
             String existingText = (String) application.getAttribute("clipboard_" + user);
             if (existingText != null) {
-                existingText = existingText.trim();
+                existingText = existingText.replaceFirst("^\\s*", "").replaceFirst("\\s*$", ""); // trim 대체
             }
             
-            text = text.trim();
+            text = text.replaceFirst("^\\s*", "").replaceFirst("\\s*$", ""); // trim 대체
             
             String newText;
             if (existingText == null || existingText.isEmpty()) {
@@ -45,7 +45,7 @@
                 newText = sb.toString();
             }
             
-            newText = newText.trim();
+            newText = newText.replaceFirst("^\\s*", "").replaceFirst("\\s*$", ""); // 최종 trim 대체
             application.setAttribute("clipboard_" + user, newText);
         }
         return;
@@ -60,20 +60,18 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Simple VDI Clipboard (IE8 Compatible)</title>
-    <meta http-equiv="X-UA-Compatible" content="IE=8"> 
+    <title>Simple VDI Clipboard (IE7/8 Compatible)</title>
+    <meta http-equiv="X-UA-Compatible" content="IE=7"> 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        /* --- [스타일] (기존 스타일 유지) --- */
+        /* --- [스타일] IE7/8 호환을 위해 flex 제거 및 float/width 기반으로 수정 --- */
         body, html { margin: 0; padding: 0; height: 100%; font-family: 'Malgun Gothic', sans-serif; }
         .container {
-            display: flex; /* IE8은 flex 지원 안함. 레이아웃이 깨질 수 있으나, 기본 폼 요소는 잘 동작합니다. */
-            flex-direction: column;
+            display: block; /* flex 제거 */
             height: 95vh;
             padding: 10px;
             box-sizing: border-box;
         }
-        /* IE8 환경에서 레이아웃이 깨지는 것을 방지하기 위해 간단한 width/height 설정 */
         #textArea {
             width: 98%; /* flex 대체 */
             height: 70%; /* flex 대체 */
@@ -97,11 +95,9 @@
             font-weight: bold;
         }
         .controls {
-            /* IE8 호환을 위해 float 또는 table layout 필요하나, 기본적인 block/inline-block으로 처리 */
-            /* flex는 IE8에서 작동하지 않으므로, 이 부분을 사용하는 기기는 레이아웃이 다르게 보일 수 있습니다. */
             display: block; 
             margin-top: 10px;
-            overflow: hidden; /* float 해제 */
+            overflow: hidden;
         }
         .controls > * {
             float: left;
@@ -117,33 +113,32 @@
         #btnSend {
             background-color: #007bff;
             color: white;
-            float: right; /* 전송 버튼을 오른쪽으로 */
+            float: right;
         }
-        /* --- 토스트 메시지 스타일 (IE8에서도 opacity와 position:fixed 지원) --- */
+        /* --- 토스트 메시지 스타일 (IE7/8 호환 투명도 적용) --- */
         #toastMessage {
             visibility: hidden;
             min-width: 250px;
-            background-color: rgba(51, 51, 51, 0.7); 
+            background-color: #333; /* IE7/8에서 filter:alpha와 함께 쓰기 위해 단색으로 변경 */
+            filter: alpha(opacity=70); /* IE7/8 투명도 70% */
             color: #fff;
             text-align: center;
-            border-radius: 10px;
+            border-radius: 10px; 
             padding: 16px;
             position: fixed;
             z-index: 9999;
             left: 50%;
             bottom: 30px;
-            margin-left: -125px; /* left: 50%와 함께 사용 시 중앙 정렬 (transform 대체) */
+            margin-left: -125px; /* 중앙 정렬 (transform 대체) */
             font-size: 17px;
             opacity: 0;
-            filter: alpha(opacity=0); /* IE8 opacity 지원 */
-            transition: opacity 0.5s, visibility 0s; /* IE8은 transition을 지원하지 않아 부드러움이 떨어질 수 있음 */
+            filter: alpha(opacity=0); 
         }
         
         #toastMessage.show {
             visibility: visible;
             opacity: 1;
-            filter: alpha(opacity=100); /* IE8 opacity 지원 */
-            /* 애니메이션은 IE8에서 지원하지 않으므로, 단순 표시/숨김만 작동함 */
+            filter: alpha(opacity=100); 
         }
     </style>
 </head>
@@ -170,18 +165,17 @@
     <div id="toastMessage"></div>
 
     <script type="text/javascript">
-        // IE8 호환을 위해 var 사용
+        // --- [JavaScript] IE7/8 호환을 위한 변경 ---
         var textArea = document.getElementById('textArea');
         var userSelect = document.getElementById('userSelect');
         var toastMessage = document.getElementById('toastMessage');
         var lastLoadedText = "";
         
-        // IE8 호환: XMLHttpRequest 객체를 생성하는 함수
+        // IE7/8 호환: XMLHttpRequest 객체 생성 함수
         function createXhr() {
             if (window.XMLHttpRequest) {
-                return new XMLHttpRequest(); // IE7+, Firefox, Chrome, Opera, Safari
+                return new XMLHttpRequest();
             } else if (window.ActiveXObject) {
-                // IE6, IE5
                 try {
                     return new ActiveXObject("Msxml2.XMLHTTP");
                 } catch (e) {
@@ -195,9 +189,9 @@
             return null;
         }
 
-        // --- [토스트 메시지 함수] ---
+        // 토스트 메시지 함수
         function showToast(message) {
-            toastMessage.innerHTML = message; // innerHTML 사용
+            toastMessage.innerHTML = message;
             toastMessage.className = "show";
             
             setTimeout(function() { 
@@ -205,13 +199,12 @@
             }, 2500);
         }
 
-        // [기능 4 & 필수요건] 텍스트 전송 (AJAX - IE8 호환)
+        // 전송 함수 (fetch 대신 AJAX 사용)
         function sendText() {
             var text = textArea.value; 
             var user = userSelect.value;
             
-            // trim()은 IE8에서 지원하지 않으므로, 정규식을 사용하여 대체 (간소화된 버전)
-            text = text.replace(/^\s+|\s+$/g, ''); 
+            text = text.replace(/^\s+|\s+$/g, ''); // trim() 대체
             
             if (text === "") return; 
 
@@ -227,11 +220,9 @@
             var params = 'user=' + encodeURIComponent(user) + '&text=' + encodeURIComponent(text);
             
             xhr.open('POST', url, true);
-            // Content-Type 설정 (IE8에서 중요)
             xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
             
             xhr.onreadystatechange = function() {
-                // 통신 완료 및 성공 (HTTP 200)
                 if (xhr.readyState === 4 && xhr.status === 200) {
                     showToast("✅ 전송 완료");
                     loadText(true); 
@@ -241,7 +232,7 @@
             xhr.send(params);
         }
 
-        // [기능 3] 텍스트 불러오기 (AJAX - IE8 호환)
+        // 불러오기 함수 (fetch 대신 AJAX 사용)
         function loadText(forceUpdate) {
             var user = userSelect.value;
 
@@ -251,7 +242,7 @@
                 return;
             }
             
-            var url = 'clipboard.jsp?action=load&user=' + encodeURIComponent(user) + '&_=' + new Date().getTime(); // 캐시 방지
+            var url = 'clipboard.jsp?action=load&user=' + encodeURIComponent(user) + '&_=' + new Date().getTime();
             
             xhr.open('GET', url, true);
             
@@ -259,8 +250,7 @@
                 if (xhr.readyState === 4 && xhr.status === 200) {
                     var text = xhr.responseText;
                     
-                    // trim() 대신 정규식 대체
-                    var trimmedText = text.replace(/^\s+|\s+$/g, ''); 
+                    var trimmedText = text.replace(/^\s+|\s+$/g, ''); // trim() 대체
 
                     if (trimmedText !== lastLoadedText || forceUpdate) {
                         textArea.value = trimmedText;
@@ -279,41 +269,38 @@
             xhr.send(null);
         }
 
-        // [필수요건 대응] 엔터 키 입력 시 바로 전송 & 줄바꿈 방지 (IE8 호환)
-        // IE8은 attachEvent 사용 (이벤트 객체 접근 방식 다름)
-        if (textArea.addEventListener) { // 표준 브라우저
+        // 이벤트 리스너 (addEventListener 대신 attachEvent 사용)
+        if (textArea.addEventListener) { // 표준
             textArea.addEventListener('keydown', function(e) {
-                if (e.keyCode === 13) { // keyCode 13 = Enter
+                if (e.keyCode === 13) {
                     e.preventDefault();
                     sendText();
                 }
             }, false);
-        } else if (textArea.attachEvent) { // IE8 이하
+        } else if (textArea.attachEvent) { // IE7/8
             textArea.attachEvent('onkeydown', function(e) {
                 if (window.event.keyCode === 13) {
-                    window.event.returnValue = false; // 기본 동작(줄바꿈) 방지
+                    window.event.returnValue = false; 
                     sendText();
                 }
             });
         }
-
-
-        // [필수요건 대응] 자동 동기화 (1초마다 서버 상태 확인)
-        setInterval(loadText, 1000);
-
-        // 사용자 변경 시 즉시 해당 사용자의 데이터 로드 (IE8 호환)
-        if (userSelect.addEventListener) {
+        
+        if (userSelect.addEventListener) { // 표준
              userSelect.addEventListener('change', function() {
                 lastLoadedText = "";
                 loadText(true);
             }, false);
-        } else if (userSelect.attachEvent) {
+        } else if (userSelect.attachEvent) { // IE7/8
             userSelect.attachEvent('onchange', function() {
                 lastLoadedText = "";
                 loadText(true);
             });
         }
-        
+
+        // 자동 동기화
+        setInterval(loadText, 1000);
+
         // 초기 로드
         loadText(true);
     </script>
