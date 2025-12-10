@@ -4,12 +4,44 @@
     request.setCharacterEncoding("UTF-8");
     String action = request.getParameter("action");
     
+    // 최대 라인 수 및 삭제 비율 상수 정의
+    final int MAX_LINES = 10000;
+    final double DELETE_PERCENTAGE = 0.3; // 30%
+
     // 데이터 저장소 (서버 메모리 공유: application scope)
     if ("save".equals(action)) {
         String user = request.getParameter("user");
         String text = request.getParameter("text");
+        
         if (user != null && text != null) {
-            application.setAttribute("clipboard_" + user, text);
+            String existingText = (String) application.getAttribute("clipboard_" + user);
+            
+            // 1. 기존 텍스트에 새 텍스트를 추가 (줄바꿈 추가)
+            String newText;
+            if (existingText == null || existingText.isEmpty()) {
+                newText = text;
+            } else {
+                // 이전 내용과 현재 전송된 내용 사이에 줄바꿈 추가 (클립보드 내용 누적)
+                newText = existingText + "\n" + text; 
+            }
+            
+            // 2. 라인 수 검사 및 삭제 로직
+            String[] lines = newText.split("\\r?\\n"); // 모든 종류의 줄바꿈 문자로 분리
+            
+            if (lines.length > MAX_LINES) {
+                // 초과된 경우: 상위 30% 라인 수 계산
+                int linesToDelete = (int) (lines.length * DELETE_PERCENTAGE);
+                if (linesToDelete == 0) linesToDelete = 1; // 최소 1줄은 삭제 보장
+
+                // 상위 linesToDelete 개를 제외한 나머지 라인만 저장
+                String[] remainingLines = java.util.Arrays.copyOfRange(lines, linesToDelete, lines.length);
+                
+                // 다시 텍스트로 합치기
+                newText = String.join("\n", remainingLines);
+            }
+            
+            // 3. 서버에 최종 텍스트 저장
+            application.setAttribute("clipboard_" + user, newText);
         }
         return; // HTML 렌더링 중단
     } else if ("load".equals(action)) {
@@ -34,6 +66,17 @@
             height: 95vh;
             padding: 10px;
             box-sizing: border-box;
+        }
+        /* --- [추가된 스타일] 안내 메시지 --- */
+        .info-message {
+            background-color: #fff3cd; /* 경고 느낌의 노란색 배경 */
+            color: #856404; /* 진한 노란색 텍스트 */
+            border: 1px solid #ffeeba;
+            padding: 8px 15px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            font-size: 14px;
+            font-weight: bold;
         }
         #textArea {
             flex: 1;
@@ -88,7 +131,11 @@
 <body>
 
     <div class="container">
-        <textarea id="textArea" placeholder="여기에 텍스트를 입력하세요..."></textarea>
+        
+        <div class="info-message">
+            ⚠️ **최대 1만 라인**까지 저장되며 (초과 시 오래된 내용 30% 삭제), 서버 재시작 시 **데이터는 삭제**됩니다.
+        </div>
+        <textarea id="textArea" placeholder="여기에 텍스트를 입력하세요. 엔터(Enter)를 누르면 바로 전송됩니다."></textarea>
         
         <div class="controls">
             <select id="userSelect">
@@ -107,10 +154,14 @@
         const userSelect = document.getElementById('userSelect');
         let lastLoadedText = "";
 
-        // [기능 4 & 필수요건] 텍스트 전송 (AJAX) - (이전과 동일)
+        // [기능 4 & 필수요건] 텍스트 전송 (AJAX)
         function sendText() {
-            const text = textArea.value;
+            const text = textArea.value.trim(); 
             const user = userSelect.value;
+            
+            if (text === "") return; 
+
+            textArea.value = ""; 
 
             fetch('clipboard.jsp?action=save', {
                 method: 'POST',
@@ -119,46 +170,45 @@
             })
             .then(() => {
                 console.log("전송 완료");
-                lastLoadedText = text;
+                loadText(true); 
             });
         }
 
-        // [기능 3] 텍스트 불러오기 (AJAX) - (이전과 동일)
-        function loadText() {
+        // [기능 3] 텍스트 불러오기 (AJAX)
+        function loadText(forceUpdate = false) {
             const user = userSelect.value;
 
             fetch('clipboard.jsp?action=load&user=' + encodeURIComponent(user))
             .then(response => response.text())
             .then(text => {
-                if (text !== lastLoadedText) {
-                    textArea.value = text.trim();
-                    lastLoadedText = text;
+                const trimmedText = text.trim();
+
+                if (trimmedText !== lastLoadedText || forceUpdate) {
+                    textArea.value = trimmedText;
+                    lastLoadedText = trimmedText;
                 }
             });
         }
 
-        // ------------------------------------------------------------------
-        // [수정된 부분] 엔터 키 입력 시 바로 전송 & 줄바꿈 방지
-        // ------------------------------------------------------------------
+        // [필수요건 대응] 엔터 키 입력 시 바로 전송 & 줄바꿈 방지
         textArea.addEventListener('keydown', function(e) {
-            // Enter 키만 감지
             if (e.key === 'Enter') {
-                e.preventDefault(); // Enter 키의 기본 동작(줄바꿈) 막기
-                sendText();         // 즉시 전송 함수 호출
+                e.preventDefault();
+                sendText();
             }
         });
 
-        // [필수요건 대응] 자동 동기화 (1초마다 서버 상태 확인) - (이전과 동일)
+        // [필수요건 대응] 자동 동기화 (1초마다 서버 상태 확인)
         setInterval(loadText, 1000);
 
-        // 사용자 변경 시 즉시 해당 사용자의 데이터 로드 - (이전과 동일)
+        // 사용자 변경 시 즉시 해당 사용자의 데이터 로드
         userSelect.addEventListener('change', () => {
             lastLoadedText = "";
-            loadText();
+            loadText(true);
         });
 
-        // 초기 로드 - (이전과 동일)
-        loadText();
+        // 초기 로드
+        loadText(true);
     </script>
 </body>
 </html>
