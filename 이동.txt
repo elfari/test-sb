@@ -1,6 +1,7 @@
 <%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
+<%@ page import="java.util.Arrays" %>
 <%
-    // --- [백엔드 로직] 데이터 처리 영역 (이전과 동일) ---
+    // --- [백엔드 로직] 데이터 처리 영역 (JDK 1.7 호환) ---
     request.setCharacterEncoding("UTF-8");
     String action = request.getParameter("action");
     
@@ -26,7 +27,8 @@
             }
             
             // 2. 라인 수 검사 및 삭제 로직
-            String[] lines = newText.split("\\r?\\n"); // 모든 종류의 줄바꿈 문자로 분리
+            // \r?\n: 모든 종류의 줄바꿈 문자로 분리
+            String[] lines = newText.split("\\r?\\n"); 
             
             if (lines.length > MAX_LINES) {
                 // 초과된 경우: 상위 30% 라인 수 계산
@@ -34,13 +36,21 @@
                 if (linesToDelete == 0) linesToDelete = 1; // 최소 1줄은 삭제 보장
 
                 // 상위 linesToDelete 개를 제외한 나머지 라인만 저장
-                String[] remainingLines = java.util.Arrays.copyOfRange(lines, linesToDelete, lines.length);
+                // JDK 1.7 호환: Arrays.copyOfRange 사용
+                String[] remainingLines = Arrays.copyOfRange(lines, linesToDelete, lines.length);
                 
-                // 다시 텍스트로 합치기
-                newText = String.join("\n", remainingLines);
+                // 3. JDK 1.7 호환: StringBuilder를 사용하여 배열을 줄바꿈으로 합치기
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < remainingLines.length; i++) {
+                    if (i > 0) {
+                        sb.append("\n");
+                    }
+                    sb.append(remainingLines[i]);
+                }
+                newText = sb.toString();
             }
             
-            // 3. 서버에 최종 텍스트 저장
+            // 4. 서버에 최종 텍스트 저장
             application.setAttribute("clipboard_" + user, newText);
         }
         return; // HTML 렌더링 중단
@@ -67,10 +77,9 @@
             padding: 10px;
             box-sizing: border-box;
         }
-        /* --- [추가된 스타일] 안내 메시지 --- */
         .info-message {
-            background-color: #fff3cd; /* 경고 느낌의 노란색 배경 */
-            color: #856404; /* 진한 노란색 텍스트 */
+            background-color: #fff3cd;
+            color: #856404;
             border: 1px solid #ffeeba;
             padding: 8px 15px;
             margin-bottom: 10px;
@@ -150,11 +159,12 @@
     </div>
 
     <script>
+        // --- [자바스크립트 로직] (이전과 동일 - 브라우저 기능이므로 JDK 버전에 영향 없음) ---
         const textArea = document.getElementById('textArea');
         const userSelect = document.getElementById('userSelect');
         let lastLoadedText = "";
 
-        // [기능 4 & 필수요건] 텍스트 전송 (AJAX)
+        // 텍스트 전송 (AJAX)
         function sendText() {
             const text = textArea.value.trim(); 
             const user = userSelect.value;
@@ -174,7 +184,7 @@
             });
         }
 
-        // [기능 3] 텍스트 불러오기 (AJAX)
+        // 텍스트 불러오기 (AJAX)
         function loadText(forceUpdate = false) {
             const user = userSelect.value;
 
@@ -190,7 +200,7 @@
             });
         }
 
-        // [필수요건 대응] 엔터 키 입력 시 바로 전송 & 줄바꿈 방지
+        // 엔터 키 입력 시 바로 전송 & 줄바꿈 방지
         textArea.addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -198,7 +208,7 @@
             }
         });
 
-        // [필수요건 대응] 자동 동기화 (1초마다 서버 상태 확인)
+        // 자동 동기화 (1초마다 서버 상태 확인)
         setInterval(loadText, 1000);
 
         // 사용자 변경 시 즉시 해당 사용자의 데이터 로드
