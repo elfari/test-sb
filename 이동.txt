@@ -1,23 +1,25 @@
-<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8"%>
+<%@ page language="java" contentType="text/html; charset=UTF-8" pageEncoding="UTF-8" trimDirectiveWhitespaces="true" %>
 <%@ page import="java.util.Arrays" %>
 <%
-    // --- [백엔드 로직] 데이터 처리 영역 (JDK 1.7 호환) ---
+    // --- [백엔드 로직] 데이터 처리 영역 (JDK 1.7 호환, 변경 없음) ---
     request.setCharacterEncoding("UTF-8");
     String action = request.getParameter("action");
     
-    // 최대 라인 수 및 삭제 비율 상수 정의
     final int MAX_LINES = 10000;
-    final double DELETE_PERCENTAGE = 0.3; // 30%
+    final double DELETE_PERCENTAGE = 0.3;
 
-    // 데이터 저장소 (서버 메모리 공유: application scope)
     if ("save".equals(action)) {
         String user = request.getParameter("user");
         String text = request.getParameter("text");
         
         if (user != null && text != null) {
             String existingText = (String) application.getAttribute("clipboard_" + user);
+            if (existingText != null) {
+                existingText = existingText.trim();
+            }
             
-            // 1. 기존 텍스트에 새 텍스트를 추가 (줄바꿈 추가)
+            text = text.trim();
+            
             String newText;
             if (existingText == null || existingText.isEmpty()) {
                 newText = text;
@@ -25,17 +27,14 @@
                 newText = existingText + "\n" + text; 
             }
             
-            // 2. 라인 수 검사 및 삭제 로직
             String[] lines = newText.split("\\r?\\n"); 
             
             if (lines.length > MAX_LINES) {
                 int linesToDelete = (int) (lines.length * DELETE_PERCENTAGE);
                 if (linesToDelete == 0) linesToDelete = 1; 
 
-                // 상위 linesToDelete 개를 제외한 나머지 라인만 저장
                 String[] remainingLines = Arrays.copyOfRange(lines, linesToDelete, lines.length);
                 
-                // 3. JDK 1.7 호환: StringBuilder를 사용하여 배열을 줄바꿈으로 합치기
                 StringBuilder sb = new StringBuilder();
                 for (int i = 0; i < remainingLines.length; i++) {
                     if (i > 0) {
@@ -46,32 +45,46 @@
                 newText = sb.toString();
             }
             
-            // 4. 서버에 최종 텍스트 저장
+            newText = newText.trim();
             application.setAttribute("clipboard_" + user, newText);
         }
-        return; // HTML 렌더링 중단
+        return;
     } else if ("load".equals(action)) {
         String user = request.getParameter("user");
         String text = (String) application.getAttribute("clipboard_" + user);
         out.print(text == null ? "" : text);
-        return; // HTML 렌더링 중단
+        return;
     }
 %>
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Simple VDI Clipboard</title>
+    <title>Simple VDI Clipboard (IE8 Compatible)</title>
+    <meta http-equiv="X-UA-Compatible" content="IE=8"> 
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        /* --- [스타일] (기존 스타일) --- */
+        /* --- [스타일] (기존 스타일 유지) --- */
         body, html { margin: 0; padding: 0; height: 100%; font-family: 'Malgun Gothic', sans-serif; }
         .container {
-            display: flex;
+            display: flex; /* IE8은 flex 지원 안함. 레이아웃이 깨질 수 있으나, 기본 폼 요소는 잘 동작합니다. */
             flex-direction: column;
             height: 95vh;
             padding: 10px;
             box-sizing: border-box;
+        }
+        /* IE8 환경에서 레이아웃이 깨지는 것을 방지하기 위해 간단한 width/height 설정 */
+        #textArea {
+            width: 98%; /* flex 대체 */
+            height: 70%; /* flex 대체 */
+            border: 2px solid #007bff;
+            border-radius: 10px;
+            padding: 15px;
+            font-size: 16px;
+            resize: none;
+            box-sizing: border-box;
+            outline: none;
+            margin-bottom: 10px;
         }
         .info-message {
             background-color: #fff3cd;
@@ -83,60 +96,34 @@
             font-size: 14px;
             font-weight: bold;
         }
-        #textArea {
-            flex: 1;
-            width: 100%;
-            border: 2px solid #007bff;
-            border-radius: 10px;
-            padding: 15px;
-            font-size: 16px;
-            resize: none;
-            box-sizing: border-box;
-            outline: none;
-        }
         .controls {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            /* IE8 호환을 위해 float 또는 table layout 필요하나, 기본적인 block/inline-block으로 처리 */
+            /* flex는 IE8에서 작동하지 않으므로, 이 부분을 사용하는 기기는 레이아웃이 다르게 보일 수 있습니다. */
+            display: block; 
             margin-top: 10px;
-            gap: 10px;
+            overflow: hidden; /* float 해제 */
         }
-        select {
-            padding: 10px;
-            border: 2px solid #007bff;
-            border-radius: 5px;
-            font-size: 16px;
-            width: 80px;
-            font-weight: bold;
-            color: #007bff;
+        .controls > * {
+            float: left;
+            margin-right: 10px;
         }
-        button {
+        select, button {
             padding: 10px 20px;
             border: 2px solid #007bff;
-            background-color: white;
-            color: #007bff;
             font-size: 16px;
-            font-weight: bold;
             border-radius: 5px;
             cursor: pointer;
-            transition: 0.2s;
-        }
-        button:hover {
-            background-color: #007bff;
-            color: white;
         }
         #btnSend {
             background-color: #007bff;
             color: white;
-            flex-grow: 1;
-            max-width: 150px;
+            float: right; /* 전송 버튼을 오른쪽으로 */
         }
-
-        /* --- [추가된 스타일] 토스트 메시지 --- */
+        /* --- 토스트 메시지 스타일 (IE8에서도 opacity와 position:fixed 지원) --- */
         #toastMessage {
-            visibility: hidden; /* 기본적으로 숨김 */
+            visibility: hidden;
             min-width: 250px;
-            background-color: #333;
+            background-color: rgba(51, 51, 51, 0.7); 
             color: #fff;
             text-align: center;
             border-radius: 10px;
@@ -145,37 +132,28 @@
             z-index: 9999;
             left: 50%;
             bottom: 30px;
-            transform: translateX(-50%);
+            margin-left: -125px; /* left: 50%와 함께 사용 시 중앙 정렬 (transform 대체) */
             font-size: 17px;
             opacity: 0;
-            transition: opacity 0.5s, visibility 0s;
+            filter: alpha(opacity=0); /* IE8 opacity 지원 */
+            transition: opacity 0.5s, visibility 0s; /* IE8은 transition을 지원하지 않아 부드러움이 떨어질 수 있음 */
         }
         
         #toastMessage.show {
             visibility: visible;
             opacity: 1;
-            animation: fadein 0.5s, fadeout 0.5s 2s; /* 0.5초 등장, 2초 후 사라짐 시작 */
-        }
-
-        /* 애니메이션 키프레임 */
-        @keyframes fadein {
-            from {bottom: 0; opacity: 0;} 
-            to {bottom: 30px; opacity: 1;}
-        }
-
-        @keyframes fadeout {
-            from {opacity: 1;} 
-            to {opacity: 0;}
+            filter: alpha(opacity=100); /* IE8 opacity 지원 */
+            /* 애니메이션은 IE8에서 지원하지 않으므로, 단순 표시/숨김만 작동함 */
         }
     </style>
 </head>
 <body>
 
     <div class="container">
-        
         <div class="info-message">
             ⚠️ **최대 1만 라인**까지 저장되며 (초과 시 오래된 내용 30% 삭제), 서버 재시작 시 **데이터는 삭제**됩니다.
         </div>
+
         <textarea id="textArea" placeholder="여기에 텍스트를 입력하세요. 엔터(Enter)를 누르면 바로 전송됩니다."></textarea>
         
         <div class="controls">
@@ -185,93 +163,157 @@
             </select>
 
             <button id="btnLoad" onclick="loadText()">불러오기</button>
-
             <button id="btnSend" onclick="sendText()">전송</button>
         </div>
     </div>
     
     <div id="toastMessage"></div>
 
-    <script>
-        const textArea = document.getElementById('textArea');
-        const userSelect = document.getElementById('userSelect');
-        const toastMessage = document.getElementById('toastMessage');
-        let lastLoadedText = "";
+    <script type="text/javascript">
+        // IE8 호환을 위해 var 사용
+        var textArea = document.getElementById('textArea');
+        var userSelect = document.getElementById('userSelect');
+        var toastMessage = document.getElementById('toastMessage');
+        var lastLoadedText = "";
+        
+        // IE8 호환: XMLHttpRequest 객체를 생성하는 함수
+        function createXhr() {
+            if (window.XMLHttpRequest) {
+                return new XMLHttpRequest(); // IE7+, Firefox, Chrome, Opera, Safari
+            } else if (window.ActiveXObject) {
+                // IE6, IE5
+                try {
+                    return new ActiveXObject("Msxml2.XMLHTTP");
+                } catch (e) {
+                    try {
+                        return new ActiveXObject("Microsoft.XMLHTTP");
+                    } catch (e) {
+                        return null;
+                    }
+                }
+            }
+            return null;
+        }
 
-        // --- [추가된 함수] 토스트 메시지를 표시하고 숨김 ---
+        // --- [토스트 메시지 함수] ---
         function showToast(message) {
-            toastMessage.textContent = message;
+            toastMessage.innerHTML = message; // innerHTML 사용
             toastMessage.className = "show";
             
-            // 2.5초 후 자동으로 숨김
-            setTimeout(function(){ 
+            setTimeout(function() { 
                 toastMessage.className = toastMessage.className.replace("show", ""); 
             }, 2500);
         }
-        // ----------------------------------------------------
 
-        // [기능 4 & 필수요건] 텍스트 전송 (AJAX)
+        // [기능 4 & 필수요건] 텍스트 전송 (AJAX - IE8 호환)
         function sendText() {
-            const text = textArea.value.trim(); 
-            const user = userSelect.value;
+            var text = textArea.value; 
+            var user = userSelect.value;
+            
+            // trim()은 IE8에서 지원하지 않으므로, 정규식을 사용하여 대체 (간소화된 버전)
+            text = text.replace(/^\s+|\s+$/g, ''); 
             
             if (text === "") return; 
 
             textArea.value = ""; 
 
-            fetch('clipboard.jsp?action=save', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: 'user=' + encodeURIComponent(user) + '&text=' + encodeURIComponent(text)
-            })
-            .then(() => {
-                showToast("✅ 전송 완료"); // 전송 완료 메시지 표시
-                loadText(true); 
-            });
+            var xhr = createXhr();
+            if (!xhr) {
+                alert("AJAX를 사용할 수 없는 브라우저입니다.");
+                return;
+            }
+            
+            var url = 'clipboard.jsp?action=save';
+            var params = 'user=' + encodeURIComponent(user) + '&text=' + encodeURIComponent(text);
+            
+            xhr.open('POST', url, true);
+            // Content-Type 설정 (IE8에서 중요)
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            
+            xhr.onreadystatechange = function() {
+                // 통신 완료 및 성공 (HTTP 200)
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    showToast("✅ 전송 완료");
+                    loadText(true); 
+                }
+            };
+            
+            xhr.send(params);
         }
 
-        // [기능 3] 텍스트 불러오기 (AJAX)
-        function loadText(forceUpdate = false) {
-            const user = userSelect.value;
+        // [기능 3] 텍스트 불러오기 (AJAX - IE8 호환)
+        function loadText(forceUpdate) {
+            var user = userSelect.value;
 
-            fetch('clipboard.jsp?action=load&user=' + encodeURIComponent(user))
-            .then(response => response.text())
-            .then(text => {
-                const trimmedText = text.trim();
-
-                if (trimmedText !== lastLoadedText || forceUpdate) {
-                    textArea.value = trimmedText;
+            var xhr = createXhr();
+            if (!xhr) {
+                alert("AJAX를 사용할 수 없는 브라우저입니다.");
+                return;
+            }
+            
+            var url = 'clipboard.jsp?action=load&user=' + encodeURIComponent(user) + '&_=' + new Date().getTime(); // 캐시 방지
+            
+            xhr.open('GET', url, true);
+            
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    var text = xhr.responseText;
                     
-                    // 텍스트가 실제로 변경되거나 강제 업데이트가 아니면 메시지 표시 안함
-                    if (trimmedText !== lastLoadedText && !forceUpdate) {
-                       showToast("🔄 불러오기 완료 (자동 동기화)");
-                    } else if (forceUpdate) {
-                       // 수동 버튼 클릭이나 전송 직후 강제 로드 시 메시지 표시
-                       showToast("🔄 불러오기 완료");
+                    // trim() 대신 정규식 대체
+                    var trimmedText = text.replace(/^\s+|\s+$/g, ''); 
+
+                    if (trimmedText !== lastLoadedText || forceUpdate) {
+                        textArea.value = trimmedText;
+                        
+                        if (trimmedText !== lastLoadedText && !forceUpdate) {
+                           showToast("🔄 불러오기 완료 (자동 동기화)");
+                        } else if (forceUpdate) {
+                           showToast("🔄 불러오기 완료");
+                        }
+                        
+                        lastLoadedText = trimmedText;
                     }
-                    
-                    lastLoadedText = trimmedText;
+                }
+            };
+            
+            xhr.send(null);
+        }
+
+        // [필수요건 대응] 엔터 키 입력 시 바로 전송 & 줄바꿈 방지 (IE8 호환)
+        // IE8은 attachEvent 사용 (이벤트 객체 접근 방식 다름)
+        if (textArea.addEventListener) { // 표준 브라우저
+            textArea.addEventListener('keydown', function(e) {
+                if (e.keyCode === 13) { // keyCode 13 = Enter
+                    e.preventDefault();
+                    sendText();
+                }
+            }, false);
+        } else if (textArea.attachEvent) { // IE8 이하
+            textArea.attachEvent('onkeydown', function(e) {
+                if (window.event.keyCode === 13) {
+                    window.event.returnValue = false; // 기본 동작(줄바꿈) 방지
+                    sendText();
                 }
             });
         }
 
-        // [필수요건 대응] 엔터 키 입력 시 바로 전송 & 줄바꿈 방지
-        textArea.addEventListener('keydown', function(e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                sendText();
-            }
-        });
 
         // [필수요건 대응] 자동 동기화 (1초마다 서버 상태 확인)
         setInterval(loadText, 1000);
 
-        // 사용자 변경 시 즉시 해당 사용자의 데이터 로드
-        userSelect.addEventListener('change', () => {
-            lastLoadedText = "";
-            loadText(true);
-        });
-
+        // 사용자 변경 시 즉시 해당 사용자의 데이터 로드 (IE8 호환)
+        if (userSelect.addEventListener) {
+             userSelect.addEventListener('change', function() {
+                lastLoadedText = "";
+                loadText(true);
+            }, false);
+        } else if (userSelect.attachEvent) {
+            userSelect.attachEvent('onchange', function() {
+                lastLoadedText = "";
+                loadText(true);
+            });
+        }
+        
         // 초기 로드
         loadText(true);
     </script>
