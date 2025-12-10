@@ -1,231 +1,35 @@
-import threading
-import time
-import requests
-import pyperclip
-import keyboard
+#Requires AutoHotkey v2.0
+#SingleInstance Force
 
-SERVER_URL = "http://1.2.3.4/share_clipboard.jsp"
+^c::{
+    A_Clipboard := ""
+    Send "^c"
+    if !ClipWait(1)
+        return
 
+    text := A_Clipboard
+    if (text = "")
+        return
 
-def send_to_server(user_id: str, text: str):
-    """
-    서버에 클립보드 텍스트 업로드
-    """
-    try:
-        data = {
-            "mode": "set",
-            "user_id": user_id,
-            "text": text
-        }
-        # 타임아웃 짧게
-        resp = requests.post(SERVER_URL, data=data, timeout=3)
-        # 필요하면 resp.text 로 로그 찍을 수 있음
-        print(f"[INFO] 서버로 전송 완료 (len={len(text)})")
-    except Exception as e:
-        print(f"[WARN] 서버 전송 실패: {e}")
+    encoded := UriEncode(text)
+    url := "http://1.2.3.4/test.jsp?param=" encoded
 
+    http := ComObject("WinHttp.WinHttpRequest.5.1")
+    http.Open("GET", url)
+    http.Send()
+}
 
-def fetch_from_server(user_id: str) -> str | None:
-    """
-    서버에서 해당 user_id 의 텍스트 가져오기
-    """
-    try:
-        data = {
-            "mode": "get",
-            "user_id": user_id
-        }
-        resp = requests.post(SERVER_URL, data=data, timeout=3)
-        if resp.status_code == 200:
-            text = resp.text
-            if text is None:
-                return ""
-            return text
-        else:
-            print(f"[WARN] 서버 응답 코드: {resp.status_code}")
-            return None
-    except Exception as e:
-        print(f"[WARN] 서버 조회 실패: {e}")
-        return None
-
-
-def clipboard_watcher(user_id: str, poll_interval: float = 0.5):
-    """
-    클립보드가 변경될 때마다 서버에 자동 업로드.
-    CTRL+C 를 직접 후킹하지 않고, 클립보드 내용 변화를 감시하는 방식.
-    """
-    last_text = None
-    print("[INFO] 클립보드 감시 시작")
-
-    while True:
-        try:
-            # 현재 클립보드 내용
-            current = pyperclip.paste()
-        except Exception as e:
-            # 클립보드 접근 실패 시 잠깐 쉬었다가 다시
-            print(f"[WARN] 클립보드 읽기 실패: {e}")
-            time.sleep(poll_interval)
-            continue
-
-        # 문자열만 처리
-        if not isinstance(current, str):
-            current = ""
-
-        # 내용이 바뀌었고, 빈 문자열이 아니면 업로드
-        if current and current != last_text:
-            last_text = current
-            print(f"[INFO] 클립보드 변경 감지, 서버로 업로드")
-            send_to_server(user_id, current)
-
-        time.sleep(poll_interval)
-
-
-def install_paste_hotkey(user_id: str):
-    """
-    CTRL+V 를 후킹해서 서버에서 텍스트 받아와 붙여넣기.
-    - 단축키를 막고(suppress=True)
-    - 서버에서 텍스트 가져와 클립보드에 복사한 뒤
-    - 다시 프로그램이 'ctrl+v' 를 보내서 실제 붙여넣기 수행
-    """
-
-    def on_ctrl_v():
-        print("[INFO] CTRL+V 감지 → 서버에서 텍스트 가져오는 중...")
-        text = fetch_from_server(user_id)
-        if text is None:
-            print("[WARN] 서버에서 텍스트를 가져오지 못함")
-            return
-
-        # 가져온 텍스트를 클립보드에 넣기
-        try:
-            pyperclip.copy(text)
-            print(f"[INFO] 서버 텍스트를 클립보드에 설정 (len={len(text)})")
-        except Exception as e:
-            print(f"[WARN] 클립보드 쓰기 실패: {e}")
-            return
-
-        # 이제 실제 CTRL+V 를 한 번 보내서, 현재 포커스된 곳에 붙여넣기
-        keyboard.send("ctrl+v")
-
-    # suppress=True : 원래 CTRL+V 를 막고, 우리가 처리
-    keyboard.add_hotkey("ctrl+v", on_ctrl_v, suppress=True)
-    print("[INFO] CTRL+V 후킹 완료 (서버 텍스트 붙여넣기)")
-
-
-def choose_user_id() -> str:
-    """
-    사용자 ID 선택 (A/B)
-    """
-    while True:
-        user_id = input("사용자 ID 를 선택하세요 (A/B): ").strip().upper()
-        if user_id in ("A", "B"):
-            return user_id
-        print("A 또는 B 만 입력 가능합니다.")
-
-
-def main():
-    print("=== 클립보드 공유 프로그램 ===")
-    print("로컬PC와 VDI PC 모두에서 실행하고, 같은 사람은 같은 ID(A/B)를 사용하세요.")
-    user_id = choose_user_id()
-    print(f"[INFO] 선택된 사용자 ID: {user_id}")
-
-    # 1) 클립보드 감시 스레드 시작 (CTRL+C 후 자동 업로드)
-    watcher_thread = threading.Thread(
-        target=clipboard_watcher,
-        args=(user_id,),
-        daemon=True
-    )
-    watcher_thread.start()
-
-    # 2) CTRL+V 후킹 (붙여넣기 시 서버에서 가져와 붙여넣기)
-    install_paste_hotkey(user_id)
-
-    print("[INFO] 프로그램이 동작 중입니다. 종료하려면 CTRL+C 를 누르세요.")
-    # 키보드 이벤트 대기 (무한 대기)
-    try:
-        keyboard.wait()  # 아무 키나 대기
-    except KeyboardInterrupt:
-        print("\n[INFO] 프로그램 종료")
-
-
-if __name__ == "__main__":
-    main()
-
-
-
-
-
-
-<%@ page language="java" contentType="text/plain; charset=UTF-8" pageEncoding="UTF-8" %>
-<%
-    // -------------------------------
-    // 공통 설정
-    // -------------------------------
-    request.setCharacterEncoding("UTF-8");
-    response.setCharacterEncoding("UTF-8");
-    response.setContentType("text/plain; charset=UTF-8");
-
-    String mode   = request.getParameter("mode");
-    String userId = request.getParameter("user_id");
-
-    if (mode == null)  mode = "";
-    if (userId == null) userId = "";
-
-    mode   = mode.trim().toLowerCase();
-    userId = userId.trim().toUpperCase();
-
-    // user_id 검증 (A/B 외에는 에러)
-    if (!"A".equals(userId) && !"B".equals(userId)) {
-        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-        out.print("INVALID_USER_ID");
-        return;
+UriEncode(str) {
+    encoded := ""
+    Loop Parse, str
+    {
+        ch := Ord(A_LoopField)
+        if (ch >= 0x30 && ch <= 0x39)
+         || (ch >= 0x41 && ch <= 0x5A)
+         || (ch >= 0x61 && ch <= 0x7A)
+            encoded .= Chr(ch)
+        else
+            encoded .= "%" Format("{:02X}", ch)
     }
-
-    // application scope 에 저장할 key
-    // 예: clipboard_A, clipboard_B
-    String key = "clipboard_" + userId;
-
-    // -------------------------------
-    // mode = set : 텍스트 저장
-    // -------------------------------
-    if ("set".equals(mode)) {
-        String text = request.getParameter("text");
-        if (text == null) {
-            text = "";
-        }
-
-        // 동시성 고려해서 synchronized 사용
-        synchronized (application) {
-            application.setAttribute(key, text);
-        }
-
-        out.print("OK");
-        return;
-    }
-
-    // -------------------------------
-    // mode = get : 텍스트 조회
-    // -------------------------------
-    else if ("get".equals(mode)) {
-        String text;
-        synchronized (application) {
-            Object value = application.getAttribute(key);
-            if (value == null) {
-                text = "";
-            } else {
-                text = value.toString();
-            }
-        }
-
-        // 그냥 평문으로 텍스트 반환
-        out.print(text);
-        return;
-    }
-
-    // -------------------------------
-    // 잘못된 mode
-    // -------------------------------
-    else {
-        response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
-        out.print("INVALID_MODE");
-        return;
-    }
-%>
+    return encoded
+}
