@@ -1,35 +1,199 @@
 #Requires AutoHotkey v2.0
-#SingleInstance Force
 
-^c::{
-    A_Clipboard := ""
+; 서버 URL 설정 (필요에 따라 https로 변경 가능)
+TargetUrl := "http://1.2.3.4/test.jsp"
+
+;====================================================
+; 1. Ctrl+F1: 텍스트 복사 후 POST 요청 전송
+;====================================================
+^F1::
+{
+    ; 1. 원래의 Ctrl+C 동작 수행 (텍스트를 클립보드에 복사)
     Send "^c"
-    if !ClipWait(1)
-        return
-
-    text := A_Clipboard
-    if (text = "")
-        return
-
-    encoded := UriEncode(text)
-    url := "http://1.2.3.4/test.jsp?param=" encoded
-
-    http := ComObject("WinHttp.WinHttpRequest.5.1")
-    http.Open("GET", url)
-    http.Send()
-}
-
-UriEncode(str) {
-    encoded := ""
-    Loop Parse, str
-    {
-        ch := Ord(A_LoopField)
-        if (ch >= 0x30 && ch <= 0x39)
-         || (ch >= 0x41 && ch <= 0x5A)
-         || (ch >= 0x61 && ch <= 0x7A)
-            encoded .= Chr(ch)
-        else
-            encoded .= "%" Format("{:02X}", ch)
+    ClipWait(1)
+    
+    try {
+        SelectedText := Clipboard  ; 클립보드 내용
+        UserId := A_UserName       ; 윈도우 사용자 이름 (사용자 구분값)
+        
+        ; POST 데이터 구성: 'text=선택된 텍스트&user_id=사용자ID'
+        PostData := "text=" . SelectedText . "&user_id=" . UserId
+        
+        ; WinHttpRequest COM 객체 생성 및 설정
+        httpRequest := ComObjCreate("WinHttp.WinHttpRequest.5.1")
+        httpRequest.Open("POST", TargetUrl, false) 
+        httpRequest.SetRequestHeader("Content-Type", "application/x-www-form-urlencoded")
+        
+        httpRequest.Send(PostData)
+        
+        ; (선택적) 전송 후 사용자에게 알림
+        ; MsgBox("Ctrl+F1: 텍스트를 서버에 전송했습니다.")
+        
+    } catch as e {
+        MsgBox("Ctrl+F1 오류: " . e.Message, "오류", 16)
+    } finally {
+        httpRequest := "" 
     }
-    return encoded
 }
+
+;====================================================
+; 2. Ctrl+F2: 서버 값이 없으면 기본 V 수행
+;====================================================
+^F2::
+{
+    ; 1. 현재 클립보드 내용(기본 붙여넣기 값)을 백업합니다.
+    OriginalClipboard := Clipboard
+    
+    UserId := A_UserName
+    ; GET 요청 URL 구성
+    RequestUrl := TargetUrl . "?user_id=" . UserId
+    
+    try {
+        httpRequest := ComObjCreate("WinHttp.WinHttpRequest.5.1")
+        httpRequest.Open("GET", RequestUrl, false) 
+        httpRequest.Send()
+        
+        if (httpRequest.Status = 200) 
+        {
+            ReceivedText := httpRequest.ResponseText
+            
+            ; 2. 서버 응답이 유효한 텍스트인 경우 (읽을 값이 있는 경우):
+            if (ReceivedText != "") {
+                
+                ; 클립보드를 서버 텍스트로 업데이트
+                Clipboard := ReceivedText
+                ClipWait(1)
+                
+                ; 서버 텍스트 붙여넣기 실행 (Ctrl+V)
+                Send "^v"
+                
+                ; 서버 텍스트를 붙여넣었으므로 스크립트 종료
+                return
+            }
+            ; 3. 서버 응답이 빈 문자열인 경우 (읽을 값이 없는 경우):
+            ;    아래의 [Fallback 로직]이 실행됩니다.
+        }
+        
+    } catch as e {
+        ; 오류 발생 시 경고 후 Fallback 로직 실행
+        MsgBox("Ctrl+F2 요청 중 오류 발생: " . e.Message, "오류", 16)
+        
+    } finally {
+        httpRequest := ""
+    }
+    
+    ; -----------------------------------------------------------------
+    ; [Fallback 로직: 서버 응답이 없거나 오류가 발생한 경우]
+    ; -----------------------------------------------------------------
+    
+    ; 4. 백업해 두었던 원래 클립보드 내용을 복원합니다.
+    Clipboard := OriginalClipboard
+    
+    ; 5. 기본 윈도우 Ctrl+V 동작을 수행합니다. (원래 복사된 내용이 붙여넣어짐)
+    Send "^v"
+}
+
+
+
+
+
+
+
+
+
+<%@ page language="java" contentType="text/plain; charset=UTF-8" pageEncoding="UTF-8"%>
+<%@ page import="java.util.concurrent.ConcurrentHashMap" %>
+<%@ page import="java.util.Map" %>
+<%@ page import="java.net.URLDecoder" %>
+<%!
+    // 1. JSP 선언부: 서버 전체에서 공유되는 데이터 저장소 정의
+    // (ConcurrentHashMap은 동시 접속 시 안전한 Map을 제공합니다.)
+    // Key: user_id (String)
+    // Value: UserData 객체 (저장된 텍스트와 읽음 상태를 담는 사용자 정의 클래스)
+    private Map<String, UserData> userStorage = new ConcurrentHashMap<>();
+
+    // UserData 클래스 정의
+    class UserData {
+        String text;
+        boolean isRead; // true면 읽었음 (만료됨), false면 읽지 않았음 (활성 상태)
+
+        public UserData(String text, boolean isRead) {
+            this.text = text;
+            this.isRead = isRead;
+        }
+
+        public String getText() {
+            return text;
+        }
+
+        public void setRead(boolean isRead) {
+            this.isRead = isRead;
+        }
+
+        public boolean isRead() {
+            return isRead;
+        }
+    }
+%>
+<%
+    // ----------------------------------------------------
+    // 기본 설정 및 변수 가져오기
+    // ----------------------------------------------------
+    // AHK가 보낸 POST/GET 데이터를 UTF-8로 처리
+    request.setCharacterEncoding("UTF-8"); 
+    // 응답은 순수 텍스트(plain)로 설정하여 AHK 클립보드에 바로 들어가게 함
+    response.setContentType("text/plain; charset=UTF-8");
+    
+    String method = request.getMethod(); // 요청 방식 (GET 또는 POST)
+    String userId = request.getParameter("user_id");
+    
+    // ----------------------------------------------------
+    // 1. POST 요청 처리 (Ctrl+F1) : 데이터 저장 및 활성화
+    // ----------------------------------------------------
+    if ("POST".equalsIgnoreCase(method)) {
+        // text 파라미터는 POST Body에 있으므로 request.getParameter()로 가져옴
+        String selectedText = request.getParameter("text");
+
+        if (userId != null && selectedText != null) {
+            // 새 데이터 객체를 생성하고 '읽지 않음(false)' 상태로 저장
+            UserData data = new UserData(selectedText, false);
+            userStorage.put(userId, data); 
+
+            // AHK 응답: 성공 메시지 (클라이언트에는 표시되지 않음)
+            out.print("SUCCESS: Data saved for " + userId);
+        } else {
+            out.print("ERROR: Missing required POST parameters.");
+        }
+
+    // ----------------------------------------------------
+    // 2. GET 요청 처리 (Ctrl+F2) : 데이터 조회 및 만료
+    // ----------------------------------------------------
+    } else if ("GET".equalsIgnoreCase(method)) {
+        
+        if (userId != null) {
+            UserData data = userStorage.get(userId);
+            
+            // 데이터가 존재하고 아직 읽지 않은(isRead=false) 상태인 경우
+            if (data != null && !data.isRead()) {
+                
+                // 1. 텍스트 반환 (AHK 클립보드에 들어갈 내용)
+                String textToReturn = data.getText();
+                out.print(textToReturn);
+                
+                // 2. ★ 핵심 로직: 데이터를 '읽음(true)' 상태로 업데이트 (만료)
+                data.setRead(true);
+                
+            } else {
+                // 데이터가 없거나 이미 읽은 상태인 경우
+                // AHK 스크립트의 Fallback 로직을 트리거하기 위해 빈 문자열 반환
+                out.print(""); 
+            }
+        } else {
+            // userId가 누락된 경우
+            out.print("");
+        }
+    } else {
+        // 지원하지 않는 메소드
+        out.print("ERROR: Method not supported.");
+    }
+%>
