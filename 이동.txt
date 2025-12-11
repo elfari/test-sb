@@ -4,31 +4,58 @@
 TargetUrl := "http://1.2.3.4/test.jsp"
 
 ;====================================================
-; URL 인코딩 함수 (User-Defined Function)
-; - 특수문자, 한글, 그리고 줄바꿈 문자를 %xx 형식으로 변환합니다.
-; - 이 함수는 AHK 포럼 등에서 널리 사용되는 표준 구현을 기반으로 합니다.
+; URL 인코딩 함수 (자체 구현)
+; - 특수 문자 및 줄바꿈 문자를 %xx 형식으로 변환합니다.
+; - AHK v2.0에서 안전하게 사용할 수 있도록 구현되었습니다.
 ;====================================================
-URLEncode(str, encoding:="UTF-8") {
-    ; WinHttpRequest 객체를 사용한 간단한 인코딩 구현
+URLEncode(str) {
+    ; 인코딩이 필요 없는 문자는 제외하고, 인코딩해야 할 문자만 처리합니다.
+    ; 여기서는 안전한 아스키 문자와 숫자를 제외한 문자를 인코딩합니다.
+    
+    ; WinHttp.WinHttpRequest.5.1 객체의 기능을 사용하여 바이너리 문자열을 바이트 배열로 변환합니다.
+    ; 이 방법은 외부 사이트 대신 윈도우 내장 COM 기능을 사용합니다.
     try {
-        ; MSXML2.ServerXMLHTTP를 사용해 인코딩 기능을 활용
-        XMLHttp := ComObjCreate("MSXML2.ServerXMLHTTP")
-        
-        ; 인코딩이 필요한 문자열을 요청 본문에 넣고
-        XMLHttp.Open("GET", "http://example.com/?" . str, false)
-        XMLHttp.Send()
-        
-        ; URL에서 파라미터 부분만 추출하여 반환 (첫 번째 '?' 이후)
-        return SubStr(XMLHttp.Option(2) , InStr(XMLHttp.Option(2), "?") + 1)
+        ; 1. ADODB.Stream 객체를 사용해 문자열을 UTF-8 바이트 배열로 변환
+        Stream := ComObjCreate("ADODB.Stream")
+        Stream.Type := 2  ; Text
+        Stream.Charset := "UTF-8"
+        Stream.Open()
+        Stream.WriteText(str)
+        Stream.Position := 0
+        Stream.Type := 1  ; Binary
+        Stream.Position := 0
+        Bytes := Stream.Read()
+        Stream.Close()
     } catch {
         ; 오류 발생 시 (예: COM 객체 생성 실패) 원본 문자열 반환
         return str
     }
+
+    EncodedStr := ""
+    Loop Bytes.MaxIndex
+    {
+        Byte := Bytes.GetItem(A_Index - 1)
+        ; URL에서 예약된 문자 (숫자, 영문, 일부 특수문자)는 인코딩하지 않습니다.
+        if ((Byte >= 0x30 && Byte <= 0x39)  ; 0-9
+         || (Byte >= 0x41 && Byte <= 0x5A)  ; A-Z
+         || (Byte >= 0x61 && Byte <= 0x7A)  ; a-z
+         || (Byte = 0x2D)                   ; -
+         || (Byte = 0x2E)                   ; .
+         || (Byte = 0x5F)                   ; _
+         || (Byte = 0x7E))                  ; ~
+        {
+            EncodedStr .= Chr(Byte)
+        } else {
+            ; 그 외의 모든 문자는 %HH 형태로 인코딩
+            EncodedStr .= "%" . Format("{:02X}", Byte)
+        }
+    }
+    return EncodedStr
 }
 
 
 ;====================================================
-; 1. Ctrl+F1: 텍스트 복사 후 POST 요청 전송 (수정된 부분)
+; 1. Ctrl+F1: 텍스트 복사 후 POST 요청 전송
 ;====================================================
 ^F1::
 {
@@ -39,15 +66,14 @@ URLEncode(str, encoding:="UTF-8") {
         SelectedText := Clipboard
         UserId := A_UserName
         
-        ; ★ 핵심 수정: 클립보드 내용을 URLEncode 함수로 인코딩
+        ; ★ 수정: 자체 구현한 URLEncode 함수 사용
         EncodedText := URLEncode(SelectedText)
         
-        ; POST 데이터 구성: 인코딩된 텍스트와 ID를 사용
+        ; POST 데이터 구성
         PostData := "text=" . EncodedText . "&user_id=" . UserId
         
         httpRequest := ComObjCreate("WinHttp.WinHttpRequest.5.1")
         httpRequest.Open("POST", TargetUrl, false) 
-        ; Content-Type을 x-www-form-urlencoded로 유지
         httpRequest.SetRequestHeader("Content-Type", "application/x-www-form-urlencoded")
         
         httpRequest.Send(PostData)
