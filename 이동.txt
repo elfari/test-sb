@@ -1,29 +1,14 @@
-; 사용 예시
-str := "script"
-encoded := UrlEncodeAll(str)
+String userAgent = request.getHeader("User-Agent").toLowerCase();
+String disposition;
 
-MsgBox("원본: " str "`n전체 변환: " encoded)
-; 결과: %73%63%72%69%70%74 
-; (s -> %73, c -> %63 ... 식으로 모두 변환됨)
-
-; ==============================================================================
-; 함수 정의: 예외 없이 모든 문자를 %XX로 변환
-; ==============================================================================
-UrlEncodeAll(str, encoding := "UTF-8") {
-    Local output := ""
-    
-    ; 1. 문자열을 UTF-8 바이트 버퍼로 변환
-    Local bufLen := StrPut(str, encoding)
-    Local buf := Buffer(bufLen)
-    StrPut(str, buf, encoding)
-
-    ; 2. 버퍼의 모든 바이트를 순회 (마지막 Null 종료 문자 제외)
-    Loop bufLen - 1 {
-        Local byte := NumGet(buf, A_Index - 1, "UChar")
-        
-        ; 3. [수정됨] 안전한 문자 체크(if문)를 삭제하고 무조건 변환
-        output .= Format("%{:02X}", byte)
-    }
-    
-    return output
+if (userAgent.contains("msie") || userAgent.contains("trident")) {
+    // IE 호환: URL encode (MS949 또는 UTF-8)
+    String encoded = URLEncoder.encode(fileName, "UTF-8").replaceAll("\\+", " ");
+    disposition = "attachment; filename=\"" + encoded + "\"";
+} else {
+    // 현대 브라우저: RFC 8187
+    String encoded = "UTF-8''" + URLEncoder.encode(fileName, "UTF-8");
+    disposition = "attachment; filename*=\"" + encoded + "\"";
 }
+
+response.setHeader("Content-Disposition", disposition);
