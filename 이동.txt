@@ -1,46 +1,38 @@
-import os
+SELECT 
+    t.mastid,
+    x.emp_nr,
+    x.emp_name
+FROM 
+    mastdetail t,
+    XMLTABLE(
+        DECLARE NAMESPACE ns="http://www.tobeway.com/mdm";
+        '/ns:MasterInfo/Masters/Master/PropValues/Section/Segment'
+        PASSING XMLTYPE(t.mastxml)
+        COLUMNS 
+            -- Prop ID가 'EMPNR'인 노드의 PropValue 값을 추출
+            emp_nr   VARCHAR2(100) PATH 'Prop[@ID="EMPNR"]/Area/PropValue/@Value',
+            -- Prop ID가 'DESCP'인 노드의 PropValue 값을 추출
+            emp_name VARCHAR2(100) PATH 'Prop[@ID="DESCP"]/Area/PropValue/@Value'
+    ) x;
 
-def find_files_with_text(root_dir, target_text, extensions):
-    """
-    지정된 디렉토리 하위에서 특정 확장자를 가진 파일 중 
-    특정 문자열을 포함하는 파일의 경로를 출력합니다.
-    """
-    target_text_lower = target_text.lower()
-    found_count = 0
 
-    print(f"검색 시작: {root_dir}")
-    print(f"대상 확장자: {', '.join(extensions)}")
-    print(f"검색 단어: {target_text}")
-    print("-" * 50)
 
-    # os.walk를 사용하여 하위 디렉토리까지 모두 탐색
-    for root, dirs, files in os.walk(root_dir):
-        for file in files:
-            # 파일 확장자 체크
-            if any(file.lower().endswith(ext) for ext in extensions):
-                file_path = os.path.join(root, file)
-                
-                try:
-                    # 파일 내용 읽기 (인코딩 에러 방지를 위해 errors='ignore' 사용)
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read().lower()
-                        if target_text_lower in content:
-                            print(file_path)
-                            found_count += 1
-                except Exception as e:
-                    print(f"파일 읽기 실패 ({file_path}): {e}")
 
-    print("-" * 50)
-    print(f"검색 완료! 총 {found_count}개의 파일을 찾았습니다.")
 
-# 설정값
-search_path = r"C:\mdmapp\tbwplatform8.0"
-target_string = "menu_asis"
-target_extensions = [".java", ".jsp", ".xml"]
 
-if __name__ == "__main__":
-    # 경로 존재 여부 확인 후 실행
-    if os.path.exists(search_path):
-        find_files_with_text(search_path, target_string, target_extensions)
-    else:
-        print(f"오류: '{search_path}' 경로를 찾을 수 없습니다.")
+
+
+SELECT 
+    t.mastid,
+    x.prop_id,
+    x.prop_value
+FROM 
+    mastdetail t,
+    XMLTABLE(
+        DECLARE NAMESPACE ns="http://www.tobeway.com/mdm";
+        '//Prop' -- 모든 Prop 노드를 탐색
+        PASSING XMLTYPE(t.mastxml)
+        COLUMNS 
+            prop_id    VARCHAR2(50)  PATH '@ID',
+            prop_value VARCHAR2(200) PATH 'Area/PropValue/@Value'
+    ) x;
