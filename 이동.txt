@@ -2,62 +2,60 @@ CREATE OR REPLACE FUNCTION FN_SIMILARITY_PCT (
     p_exist IN VARCHAR2,
     p_input IN VARCHAR2
 ) RETURN NUMBER IS
-    
+
     /* 변수 선언부 */
-    v_exist_norm    VARCHAR2(4000);
-    v_input_norm    VARCHAR2(4000);
+    v_exist_clean   VARCHAR2(4000);
+    v_input_clean   VARCHAR2(4000);
+    v_exist_final   VARCHAR2(4000);
+    v_input_final   VARCHAR2(4000);
     v_similarity    NUMBER := 0;
-    v_clean_exist   VARCHAR2(4000);
-    v_clean_input   VARCHAR2(4000);
 
 BEGIN
-    /* 입력값이 NULL인 경우 0 처리 */
+    /* 기존값 또는 입력값이 NULL이면 0 처리 */
     IF p_exist IS NULL OR p_input IS NULL THEN
         v_similarity := 0;
     ELSE
-        /* 기존값 정제: 대문자 변환, 구분자(콤마, 세미콜론)를 공백으로 치환 */
-        v_clean_exist := REGEXP_REPLACE(UPPER(p_exist), '[,;]', ' ');
-        
-        /* 기존값 정제: 영문, 숫자, 한글, 한자, 공백을 제외한 모든 특수문자 제거 */
-        /* UNISTR('\4E00-\9FFF')는 일반적인 한자 범위를 의미함 */
-        v_clean_exist := REGEXP_REPLACE(v_clean_exist, '[^A-Z0-9가-힣' || UNISTR('\4E00-\9FFF') || ' ]', '');
+        /* 기존값 정제: 영문, 숫자, 한글, 중문을 제외한 모든 문자를 공백으로 치환 */
+        /* 대소문자 무시를 위해 UPPER 적용 */
+        v_exist_clean := REGEXP_REPLACE(UPPER(p_exist), '[^A-Z0-9가-힣' || UNISTR('\4E00-\9FFF') || ']', ' ');
 
         /* 입력값 정제: 동일한 로직 적용 */
-        v_clean_input := REGEXP_REPLACE(UPPER(p_input), '[,;]', ' ');
-        v_clean_input := REGEXP_REPLACE(v_clean_input, '[^A-Z0-9가-힣' || UNISTR('\4E00-\9FFF') || ' ]', '');
+        v_input_clean := REGEXP_REPLACE(UPPER(p_input), '[^A-Z0-9가-힣' || UNISTR('\4E00-\9FFF') || ']', ' ');
 
-        /* 기존값 토큰화: 공백 기준 분리, 중복 제거, 정렬 후 다시 병합 */
+        /* 기존값 토큰화: 공백 기준으로 문자를 분리 */
+        /* 중복 토큰 제거, 토큰 정렬 후 다시 병합 */
         SELECT LISTAGG(token, '') WITHIN GROUP (ORDER BY token)
-          INTO v_exist_norm
+          INTO v_exist_final
           FROM (
-              SELECT DISTINCT REGEXP_SUBSTR(v_clean_exist, '[^ ]+', 1, LEVEL) AS token
+              SELECT DISTINCT REGEXP_SUBSTR(v_exist_clean, '[^ ]+', 1, LEVEL) AS token
                 FROM DUAL
-              CONNECT BY REGEXP_SUBSTR(v_clean_exist, '[^ ]+', 1, LEVEL) IS NOT NULL
+              CONNECT BY REGEXP_SUBSTR(v_exist_clean, '[^ ]+', 1, LEVEL) IS NOT NULL
           );
 
         /* 입력값 토큰화: 동일한 로직 적용 */
         SELECT LISTAGG(token, '') WITHIN GROUP (ORDER BY token)
-          INTO v_input_norm
+          INTO v_input_final
           FROM (
-              SELECT DISTINCT REGEXP_SUBSTR(v_clean_input, '[^ ]+', 1, LEVEL) AS token
+              SELECT DISTINCT REGEXP_SUBSTR(v_input_clean, '[^ ]+', 1, LEVEL) AS token
                 FROM DUAL
-              CONNECT BY REGEXP_SUBSTR(v_clean_input, '[^ ]+', 1, LEVEL) IS NOT NULL
+              CONNECT BY REGEXP_SUBSTR(v_input_clean, '[^ ]+', 1, LEVEL) IS NOT NULL
           );
 
-        /* 유사도 판별 로직 */
-        IF v_exist_norm = v_input_norm THEN
-            /* 정제 후 문자열이 완벽히 일치하는 경우 */
+        /* 유사도 계산 로직 */
+        /* 정렬된 토큰 문자열이 일치하는 경우 */
+        IF v_exist_final = v_input_final THEN
+            /* 정렬까지 동일하고 원본 값도 완전히 동일한 경우 100 */
             IF p_exist = p_input THEN
-                /* 원본까지 동일하면 100 */
                 v_similarity := 100;
+            /* 정렬된 토큰은 같으나 원본이 다른 경우 99 */
             ELSE
-                /* 원본은 다르지만 구성 토큰이 동일하면 99 */
                 v_similarity := 99;
             END IF;
         ELSE
-            /* 그 외의 경우 오라클 내장 함수를 이용해 유사도 계산 (0~100 리턴) */
-            v_similarity := UTL_MATCH.JARO_WINKLER_SIMILARITY(v_exist_norm, v_input_norm);
+            /* 그 외에는 오라클 내장 함수를 사용하여 문자열 유사도 계산 */
+            v_similarity := UTL_MATCH.JARO_WINKLER_SIMILARITY(v_exist_final, v_input_final);
         END IF;
+
     END IF;
 
     /* 최종 결과 리턴 */
@@ -68,4 +66,5 @@ EXCEPTION
         RETURN 0;
 END FN_SIMILARITY_PCT;
 /
+
 
