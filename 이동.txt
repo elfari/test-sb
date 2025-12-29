@@ -1,71 +1,51 @@
-CREATE OR REPLACE FUNCTION FN_SIMILARITY_PCT (
-    p_exist IN VARCHAR2,
-    p_input IN VARCHAR2
-) RETURN NUMBER IS
-
-    /* 변수 선언부 */
-    v_exist_clean   VARCHAR2(4000);
-    v_input_clean   VARCHAR2(4000);
-    v_exist_final   VARCHAR2(4000);
-    v_input_final   VARCHAR2(4000);
-    v_similarity    NUMBER := 0;
-
+CREATE OR REPLACE TRIGGER TRG_MRO_SIMILAR_CHECK
+AFTER INSERT ON MRO_INFO
+FOR EACH ROW
+DECLARE
+    /* 변수 선언이 필요하다면 여기에 작성 */
 BEGIN
-    /* 기존값 또는 입력값이 NULL이면 0 처리 */
-    IF p_exist IS NULL OR p_input IS NULL THEN
-        v_similarity := 0;
-    ELSE
-        /* 기존값 정제: 영문, 숫자, 한글, 중문을 제외한 모든 문자를 공백으로 치환 */
-        /* 대소문자 무시를 위해 UPPER 적용 */
-        v_exist_clean := REGEXP_REPLACE(UPPER(p_exist), '[^A-Z0-9가-힣' || UNISTR('\4E00-\9FFF') || ']', ' ');
-
-        /* 입력값 정제: 동일한 로직 적용 */
-        v_input_clean := REGEXP_REPLACE(UPPER(p_input), '[^A-Z0-9가-힣' || UNISTR('\4E00-\9FFF') || ']', ' ');
-
-        /* 기존값 토큰화: 공백 기준으로 문자를 분리 */
-        /* 중복 토큰 제거, 토큰 정렬(긴 단어 우선) 후 다시 병합 */
-        /* 변경사항: ORDER BY LENGTH(token) DESC, token */
-        SELECT LISTAGG(token, '') WITHIN GROUP (ORDER BY LENGTH(token) DESC, token)
-          INTO v_exist_final
-          FROM (
-              SELECT DISTINCT REGEXP_SUBSTR(v_exist_clean, '[^ ]+', 1, LEVEL) AS token
-                FROM DUAL
-              CONNECT BY REGEXP_SUBSTR(v_exist_clean, '[^ ]+', 1, LEVEL) IS NOT NULL
-          );
-
-        /* 입력값 토큰화: 동일한 로직 적용 */
-        SELECT LISTAGG(token, '') WITHIN GROUP (ORDER BY LENGTH(token) DESC, token)
-          INTO v_input_final
-          FROM (
-              SELECT DISTINCT REGEXP_SUBSTR(v_input_clean, '[^ ]+', 1, LEVEL) AS token
-                FROM DUAL
-              CONNECT BY REGEXP_SUBSTR(v_input_clean, '[^ ]+', 1, LEVEL) IS NOT NULL
-          );
-
-        /* 유사도 계산 로직 */
-        /* 정렬된 토큰 문자열이 일치하는 경우 */
-        IF v_exist_final = v_input_final THEN
-            /* 정렬까지 동일하고 원본 값도 완전히 동일한 경우 100 */
-            IF p_exist = p_input THEN
-                v_similarity := 100;
-            /* 정렬된 토큰은 같으나 원본이 다른 경우 99 */
-            ELSE
-                v_similarity := 99;
-            END IF;
-        ELSE
-            /* 그 외에는 오라클 내장 함수를 사용하여 문자열 유사도 계산 */
-            v_similarity := UTL_MATCH.JARO_WINKLER_SIMILARITY(v_exist_final, v_input_final);
-        END IF;
-
-    END IF;
-
-    /* 최종 결과 리턴 */
-    RETURN v_similarity;
+    /* MRO_INFO 에 신규 데이터(:NEW)가 들어오면 
+       MASTOUT 전체(혹은 일부)와 비교하여 
+       유사도가 90 이상인 것만 MRO_INFO_SIMILAR 에 적재 
+    */
+    
+    INSERT INTO MRO_INFO_SIMILAR (
+        REQ_NO,
+        SIMILAR_MASTID,
+        SIMILARITY_PCT,
+        RANK
+    )
+    SELECT :NEW.REQ_NO,            -- 신규 요청 번호
+           MAT_ID,                 -- 유사한 기존 자재 ID
+           SIM_SCORE,              -- 유사도 점수
+           RNK                     -- 순위
+      FROM (
+            SELECT MAT_ID,
+                   SIM_SCORE,
+                   /* 점수가 높은 순서대로 순위 매기기 */
+                   ROW_NUMBER() OVER(ORDER BY SIM_SCORE DESC) AS RNK
+              FROM (
+                    SELECT MAT_ID,
+                           /* 우리가 만든 유사도 함수 호출 */
+                           FN_SIMILARITY_PCT(MATERIAL_NAME, :NEW.MATERIAL_NAME) AS SIM_SCORE
+                      FROM MASTOUT
+                     WHERE 1=1
+                       /* [성능 최적화 필수 구간]
+                          100만 건 전체 비교는 너무 느리므로, 같은 대분류/중분류 내에서만 비교하도록 
+                          아래와 같은 조건을 반드시 추가하는 것이 좋습니다.
+                       */
+                       -- AND CATEGORY_ID = :NEW.CATEGORY_ID 
+                   )
+             WHERE SIM_SCORE >= 90  -- 90점 이상인 것만 필터링
+           )
+     WHERE RNK <= 10; -- (선택사항) 너무 많이 저장되지 않도록 상위 10개만 저장
 
 EXCEPTION
     WHEN OTHERS THEN
-        RETURN 0;
-END FN_SIMILARITY_PCT;
+        /* 유사도 체크 중 에러가 나더라도 
+           본래의 자재 등록(INSERT)은 정상 처리되도록 예외를 무시하거나 로그만 남김 
+        */
+        DBMS_OUTPUT.PUT_LINE('유사도 체크 트리거 에러: ' || SQLERRM);
+END;
 /
-
 
