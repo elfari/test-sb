@@ -23,8 +23,9 @@ BEGIN
         v_input_clean := REGEXP_REPLACE(UPPER(p_input), '[^A-Z0-9가-힣' || UNISTR('\4E00-\9FFF') || ']', ' ');
 
         /* 기존값 토큰화: 공백 기준으로 문자를 분리 */
-        /* 중복 토큰 제거, 토큰 정렬 후 다시 병합 */
-        SELECT LISTAGG(token, '') WITHIN GROUP (ORDER BY token)
+        /* 중복 토큰 제거, 토큰 정렬(긴 단어 우선) 후 다시 병합 */
+        /* 변경사항: ORDER BY LENGTH(token) DESC, token */
+        SELECT LISTAGG(token, '') WITHIN GROUP (ORDER BY LENGTH(token) DESC, token)
           INTO v_exist_final
           FROM (
               SELECT DISTINCT REGEXP_SUBSTR(v_exist_clean, '[^ ]+', 1, LEVEL) AS token
@@ -33,7 +34,7 @@ BEGIN
           );
 
         /* 입력값 토큰화: 동일한 로직 적용 */
-        SELECT LISTAGG(token, '') WITHIN GROUP (ORDER BY token)
+        SELECT LISTAGG(token, '') WITHIN GROUP (ORDER BY LENGTH(token) DESC, token)
           INTO v_input_final
           FROM (
               SELECT DISTINCT REGEXP_SUBSTR(v_input_clean, '[^ ]+', 1, LEVEL) AS token
