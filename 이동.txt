@@ -1,51 +1,47 @@
 CREATE OR REPLACE TRIGGER TRG_MRO_SIMILAR_CHECK
 AFTER INSERT ON MRO_INFO
 FOR EACH ROW
+WHEN (NEW.STATUS = 'C') -- [조건 1] STATUS가 'C'인 경우에만 트리거 실행
 DECLARE
-    /* 변수 선언이 필요하다면 여기에 작성 */
+    -- 변수 선언이 필요하다면 여기에 작성
 BEGIN
-    /* MRO_INFO 에 신규 데이터(:NEW)가 들어오면 
-       MASTOUT 전체(혹은 일부)와 비교하여 
-       유사도가 90 이상인 것만 MRO_INFO_SIMILAR 에 적재 
-    */
-    
+    /* [조건 2] 중복 방지를 위해 기존 유사도 결과 삭제 */
+    -- 혹시라도 이전에 생성된 데이터가 있거나, 재진입하는 경우를 대비해 먼저 삭제합니다.
+    DELETE FROM MRO_INFO_SIMILAR 
+     WHERE REQ_NO = :NEW.REQ_NO;
+
+    /* 유사도 분석 후 INSERT 로직 수행 */
     INSERT INTO MRO_INFO_SIMILAR (
         REQ_NO,
         SIMILAR_MASTID,
         SIMILARITY_PCT,
         RANK
     )
-    SELECT :NEW.REQ_NO,            -- 신규 요청 번호
-           MAT_ID,                 -- 유사한 기존 자재 ID
-           SIM_SCORE,              -- 유사도 점수
-           RNK                     -- 순위
+    SELECT :NEW.REQ_NO,
+           MAT_ID,
+           SIM_SCORE,
+           RNK
       FROM (
             SELECT MAT_ID,
                    SIM_SCORE,
-                   /* 점수가 높은 순서대로 순위 매기기 */
                    ROW_NUMBER() OVER(ORDER BY SIM_SCORE DESC) AS RNK
               FROM (
                     SELECT MAT_ID,
-                           /* 우리가 만든 유사도 함수 호출 */
+                           -- 함수 호출
                            FN_SIMILARITY_PCT(MATERIAL_NAME, :NEW.MATERIAL_NAME) AS SIM_SCORE
                       FROM MASTOUT
                      WHERE 1=1
-                       /* [성능 최적화 필수 구간]
-                          100만 건 전체 비교는 너무 느리므로, 같은 대분류/중분류 내에서만 비교하도록 
-                          아래와 같은 조건을 반드시 추가하는 것이 좋습니다.
-                       */
+                       -- [필수] 성능 최적화를 위한 1차 필터링 조건 (꼭 사용하세요!)
                        -- AND CATEGORY_ID = :NEW.CATEGORY_ID 
                    )
-             WHERE SIM_SCORE >= 90  -- 90점 이상인 것만 필터링
+             WHERE SIM_SCORE >= 90  -- 90점 이상만
            )
-     WHERE RNK <= 10; -- (선택사항) 너무 많이 저장되지 않도록 상위 10개만 저장
+     WHERE RNK <= 10; -- 상위 10개만
 
 EXCEPTION
     WHEN OTHERS THEN
-        /* 유사도 체크 중 에러가 나더라도 
-           본래의 자재 등록(INSERT)은 정상 처리되도록 예외를 무시하거나 로그만 남김 
-        */
-        DBMS_OUTPUT.PUT_LINE('유사도 체크 트리거 에러: ' || SQLERRM);
+        -- 에러 발생 시 로그만 출력하고 트랜잭션은 진행
+        DBMS_OUTPUT.PUT_LINE('Trigger Error (REQ_NO: ' || :NEW.REQ_NO || '): ' || SQLERRM);
 END;
 /
 
