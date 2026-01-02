@@ -1,47 +1,76 @@
-CREATE OR REPLACE TRIGGER TRG_MRO_SIMILAR_CHECK
-AFTER INSERT ON MRO_INFO
-FOR EACH ROW
-WHEN (NEW.STATUS = 'C') -- [조건 1] STATUS가 'C'인 경우에만 트리거 실행
-DECLARE
-    -- 변수 선언이 필요하다면 여기에 작성
-BEGIN
-    /* [조건 2] 중복 방지를 위해 기존 유사도 결과 삭제 */
-    -- 혹시라도 이전에 생성된 데이터가 있거나, 재진입하는 경우를 대비해 먼저 삭제합니다.
-    DELETE FROM MRO_INFO_SIMILAR 
-     WHERE REQ_NO = :NEW.REQ_NO;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Vector;
 
-    /* 유사도 분석 후 INSERT 로직 수행 */
-    INSERT INTO MRO_INFO_SIMILAR (
-        REQ_NO,
-        SIMILAR_MASTID,
-        SIMILARITY_PCT,
-        RANK
-    )
-    SELECT :NEW.REQ_NO,
-           MAT_ID,
-           SIM_SCORE,
-           RNK
-      FROM (
-            SELECT MAT_ID,
-                   SIM_SCORE,
-                   ROW_NUMBER() OVER(ORDER BY SIM_SCORE DESC) AS RNK
-              FROM (
-                    SELECT MAT_ID,
-                           -- 함수 호출
-                           FN_SIMILARITY_PCT(MATERIAL_NAME, :NEW.MATERIAL_NAME) AS SIM_SCORE
-                      FROM MASTOUT
-                     WHERE 1=1
-                       -- [필수] 성능 최적화를 위한 1차 필터링 조건 (꼭 사용하세요!)
-                       -- AND CATEGORY_ID = :NEW.CATEGORY_ID 
-                   )
-             WHERE SIM_SCORE >= 90  -- 90점 이상만
-           )
-     WHERE RNK <= 10; -- 상위 10개만
+public class PrintUtil {
 
-EXCEPTION
-    WHEN OTHERS THEN
-        -- 에러 발생 시 로그만 출력하고 트랜잭션은 진행
-        DBMS_OUTPUT.PUT_LINE('Trigger Error (REQ_NO: ' || :NEW.REQ_NO || '): ' || SQLERRM);
-END;
-/
+    /**
+     * 객체의 모든 멤버 변수(private 포함)를 출력합니다.
+     * 상속받은 부모 클래스의 필드까지 재귀적으로 탐색합니다.
+     */
+    public static void printAllValues(Object obj) {
+        if (obj == null) {
+            System.out.println("Target object is null.");
+            return;
+        }
 
+        Class<?> clazz = obj.getClass();
+        System.out.println("=== [" + clazz.getSimpleName() + "] Dump Start ===");
+
+        // 부모 클래스까지 탐색하기 위한 루프
+        while (clazz != null && clazz != Object.class) {
+            System.out.println("-- Declared in: " + clazz.getSimpleName() + " --");
+            
+            Field[] fields = clazz.getDeclaredFields();
+            
+            for (Field field : fields) {
+                // 1. static 필드(상수)는 제외 (필요 시 주석 처리)
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue; 
+                }
+
+                try {
+                    // 2. private 접근 허용
+                    field.setAccessible(true);
+                    
+                    // 3. 필드명과 값 가져오기
+                    String fieldName = field.getName();
+                    Object value = field.get(obj);
+
+                    // 4. 포맷팅하여 출력
+                    printFormattedValue(fieldName, value);
+
+                } catch (IllegalArgumentException | IllegalAccessException e) {
+                    System.out.println(String.format("%-20s : [Access Error]", field.getName()));
+                }
+            }
+            // 상위 클래스로 이동
+            clazz = clazz.getSuperclass();
+        }
+        System.out.println("========================================");
+    }
+
+    private static void printFormattedValue(String fieldName, Object value) {
+        String displayValue;
+
+        if (value == null) {
+            displayValue = "null";
+        } else if (value instanceof Map) {
+            displayValue = "(Map Size: " + ((Map<?, ?>) value).size() + ") " + value.toString();
+        } else if (value instanceof Vector) {
+            displayValue = "(Vector Size: " + ((Vector<?>) value).size() + ") " + value.toString();
+        } else if (value instanceof List) {
+            displayValue = "(List Size: " + ((List<?>) value).size() + ") " + value.toString();
+        } else {
+            // String, CoreDate, Primitive types 등
+            // 길이가 너무 길면 자르는 로직 등을 여기에 추가 가능
+            displayValue = value.toString();
+        }
+
+        System.out.printf("%-20s : %s%n", fieldName, displayValue);
+    }
+}
