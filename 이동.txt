@@ -1,76 +1,170 @@
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Map;
-import java.util.Vector;
+Ext.onReady(function () {
 
-public class PrintUtil {
+    // 1. 모델 정의 (필요한 필드 구성)
+    Ext.define('MroSimilarModel', {
+        extend: 'Ext.data.Model',
+        fields: [
+            { name: 'REQ_NO', type: 'string' },       // 요청번호 (그룹핑 기준)
+            { name: 'REQ_MAT_NAME', type: 'string' }, // 요청자재명
+            { name: 'SIM_MAT_ID', type: 'string' },   // 유사자재코드
+            { name: 'SIM_MAT_NAME', type: 'string' }, // 유사자재명
+            { name: 'SIMILARITY_PCT', type: 'int' },  // 유사도
+            { name: 'REASON', type: 'string' }        // 사유 (입력 대상)
+        ]
+    });
 
-    /**
-     * 객체의 모든 멤버 변수(private 포함)를 출력합니다.
-     * 상속받은 부모 클래스의 필드까지 재귀적으로 탐색합니다.
-     */
-    public static void printAllValues(Object obj) {
-        if (obj == null) {
-            System.out.println("Target object is null.");
-            return;
-        }
-
-        Class<?> clazz = obj.getClass();
-        System.out.println("=== [" + clazz.getSimpleName() + "] Dump Start ===");
-
-        // 부모 클래스까지 탐색하기 위한 루프
-        while (clazz != null && clazz != Object.class) {
-            System.out.println("-- Declared in: " + clazz.getSimpleName() + " --");
+    // 2. 스토어 정의 (groupField 필수)
+    var similarStore = Ext.create('Ext.data.Store', {
+        model: 'MroSimilarModel',
+        groupField: 'REQ_NO', // ★ 핵심: 요청번호 기준으로 그룹핑
+        data: [
+            // [TEST DATA] 상황: 요청자재 'Fitting AC10'이 2개의 유사자재와 매칭됨
+            { REQ_NO: 'REQ-2024001', REQ_MAT_NAME: 'Fitting AC10-R1/4', SIM_MAT_ID: 'MAT-1001', SIM_MAT_NAME: 'Fitting AC10-R1/8', SIMILARITY_PCT: 95, REASON: '' },
+            { REQ_NO: 'REQ-2024001', REQ_MAT_NAME: 'Fitting AC10-R1/4', SIM_MAT_ID: 'MAT-1002', SIM_MAT_NAME: 'Fitting AC10-TypeA', SIMILARITY_PCT: 88, REASON: '' },
             
-            Field[] fields = clazz.getDeclaredFields();
+            // [TEST DATA] 상황: 요청자재 'NoteBook'이 1개의 유사자재와 매칭됨
+            { REQ_NO: 'REQ-2024002', REQ_MAT_NAME: 'Samsung NoteBook', SIM_MAT_ID: 'MAT-5050', SIM_MAT_NAME: 'LG NoteBook', SIMILARITY_PCT: 60, REASON: '' }
+        ]
+    });
+
+    // 3. 팝업 윈도우 생성
+    var win = Ext.create('Ext.window.Window', {
+        title: '⚠️ 중복 의심 자재 확인',
+        width: 900,
+        height: 500,
+        layout: 'fit',
+        modal: true,
+        items: [{
+            xtype: 'grid',
+            store: similarStore,
+            columnLines: true,
             
-            for (Field field : fields) {
-                // 1. static 필드(상수)는 제외 (필요 시 주석 처리)
-                if (Modifier.isStatic(field.getModifiers())) {
-                    continue; 
+            // ★ 핵심: 셀 에디팅 플러그인 (사유 입력을 위해)
+            plugins: [
+                Ext.create('Ext.grid.plugin.CellEditing', {
+                    clicksToEdit: 1,
+                    listeners: {
+                        // [UX 꿀팁] 한 행의 사유를 수정하면, 같은 그룹(요청번호)의 모든 행에 사유를 복사해줌
+                        edit: function(editor, context) {
+                            var rec = context.record;
+                            var newVal = context.value;
+                            var reqNo = rec.get('REQ_NO');
+                            
+                            // 스토어 내 같은 요청번호를 가진 데이터들의 사유를 동기화
+                            context.grid.getStore().each(function(item){
+                                if(item.get('REQ_NO') === reqNo){
+                                    item.set('REASON', newVal);
+                                }
+                            });
+                        }
+                    }
+                })
+            ],
+
+            // ★ 핵심: 그룹핑 기능 설정
+            features: [{
+                ftype: 'grouping',
+                groupHeaderTpl: [
+                    '<span style="color:blue; font-weight:bold;">요청번호: {name}</span>',
+                    '&nbsp;&nbsp;|&nbsp;&nbsp;',
+                    '요청자재명: {[values.rows[0].data.REQ_MAT_NAME]}',
+                    '&nbsp;&nbsp;',
+                    '<span style="color:red;">(유사건수: {rows.length}건)</span>'
+                ].join(''),
+                hideGroupedHeader: true, // 그룹핑 기준 컬럼(REQ_NO)은 그리드에서 숨김
+                startCollapsed: false    // 처음부터 펼쳐서 보여줌
+            }],
+
+            columns: [
+                { 
+                    header: '유사자재코드', 
+                    dataIndex: 'SIM_MAT_ID', 
+                    width: 120,
+                    align: 'center'
+                },
+                { 
+                    header: '유사 자재명 (기존)', 
+                    dataIndex: 'SIM_MAT_NAME', 
+                    flex: 1,
+                    renderer: function(v) {
+                        return '<span style="color:#555;">' + v + '</span>';
+                    }
+                },
+                { 
+                    header: '유사도', 
+                    dataIndex: 'SIMILARITY_PCT', 
+                    width: 80, 
+                    align: 'center',
+                    renderer: function(v) {
+                        if (v >= 90) return '<b style="color:red;">' + v + '%</b>';
+                        if (v >= 80) return '<b style="color:orange;">' + v + '%</b>';
+                        return v + '%';
+                    }
+                },
+                {
+                    header: '📝 진행 사유 입력 (필수)',
+                    dataIndex: 'REASON',
+                    flex: 1.5,
+                    editor: {
+                        xtype: 'textfield',
+                        allowBlank: false,
+                        emptyText: '중복이 아님을 소명하거나 사유를 입력하세요.'
+                    },
+                    renderer: function(v, meta) {
+                        if(!v) {
+                            meta.style = "background-color: #fff0f0;"; // 미입력시 연한 빨간 배경
+                            return '<span style="color:gray; font-style:italic;">클릭하여 사유 입력...</span>';
+                        }
+                        return v;
+                    }
                 }
-
-                try {
-                    // 2. private 접근 허용
-                    field.setAccessible(true);
+            ]
+        }],
+        
+        buttons: [
+            {
+                text: '반려 (입력 취소)',
+                handler: function() {
+                    win.close();
+                }
+            },
+            {
+                text: '사유 저장 및 승인',
+                scale: 'medium',
+                cls: 'btn-approve', // 별도 CSS 클래스 적용 가능
+                handler: function() {
+                    var store = win.down('grid').getStore();
+                    var invalidCount = 0;
                     
-                    // 3. 필드명과 값 가져오기
-                    String fieldName = field.getName();
-                    Object value = field.get(obj);
+                    // 유효성 검사: 모든 그룹에 사유가 입력되었는지 확인
+                    // (그룹핑 되어 있으므로 distinct한 요청번호별로 체크하는 로직 필요)
+                    var checkedReqs = [];
+                    
+                    store.each(function(rec) {
+                        var reqNo = rec.get('REQ_NO');
+                        if(Ext.Array.indexOf(checkedReqs, reqNo) === -1) {
+                            checkedReqs.push(reqNo);
+                            if (!rec.get('REASON') || rec.get('REASON').trim() === '') {
+                                invalidCount++;
+                            }
+                        }
+                    });
 
-                    // 4. 포맷팅하여 출력
-                    printFormattedValue(fieldName, value);
+                    if (invalidCount > 0) {
+                        Ext.Msg.alert('알림', '모든 요청 건에 대해 진행 사유를 입력해야 합니다.');
+                        return;
+                    }
 
-                } catch (IllegalArgumentException | IllegalAccessException e) {
-                    System.out.println(String.format("%-20s : [Access Error]", field.getName()));
+                    Ext.Msg.confirm('확인', '입력하신 사유로 승인 처리를 진행하시겠습니까?', function(btn){
+                        if(btn === 'yes'){
+                            // TODO: 서버로 데이터 전송 (AJAX)
+                            console.log('승인 처리 로직 수행');
+                            win.close();
+                        }
+                    });
                 }
             }
-            // 상위 클래스로 이동
-            clazz = clazz.getSuperclass();
-        }
-        System.out.println("========================================");
-    }
+        ]
+    }).show();
+});
 
-    private static void printFormattedValue(String fieldName, Object value) {
-        String displayValue;
-
-        if (value == null) {
-            displayValue = "null";
-        } else if (value instanceof Map) {
-            displayValue = "(Map Size: " + ((Map<?, ?>) value).size() + ") " + value.toString();
-        } else if (value instanceof Vector) {
-            displayValue = "(Vector Size: " + ((Vector<?>) value).size() + ") " + value.toString();
-        } else if (value instanceof List) {
-            displayValue = "(List Size: " + ((List<?>) value).size() + ") " + value.toString();
-        } else {
-            // String, CoreDate, Primitive types 등
-            // 길이가 너무 길면 자르는 로직 등을 여기에 추가 가능
-            displayValue = value.toString();
-        }
-
-        System.out.printf("%-20s : %s%n", fieldName, displayValue);
-    }
-}
