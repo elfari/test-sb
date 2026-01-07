@@ -1,257 +1,28 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <title>MRO 유사 자재 중복 확인 (ExtJS Grouped Grid)</title>
-    
-    <!-- ExtJS 6.2.0 CDN (4.2와 호환되는 Classic 테마 사용) -->
-    <!-- 참고: 실제 4.2 환경에서는 로컬 라이브러리 경로를 사용하시면 됩니다. -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-triton/resources/theme-triton-all.css" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/ext-all.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-triton/theme-triton.js"></script>
+SELECT 
+    A.TABLESPACE_NAME "테이블스페이스명",
+    ROUND(A.BYTES / 1024 / 1024, 2) "할당된 용량(MB)",
+    ROUND((A.BYTES - B.FREE) / 1024 / 1024, 2) "사용 중인 용량(MB)",
+    ROUND(B.FREE / 1024 / 1024, 2) "여유 공간(MB)",
+    ROUND((A.BYTES - B.FREE) / A.BYTES * 100, 2) "사용률(%)"
+FROM 
+    (SELECT TABLESPACE_NAME, SUM(BYTES) BYTES 
+     FROM DBA_DATA_FILES 
+     GROUP BY TABLESPACE_NAME) A,
+    (SELECT TABLESPACE_NAME, SUM(BYTES) FREE 
+     FROM DBA_FREE_SPACE 
+     GROUP BY TABLESPACE_NAME) B
+WHERE 
+    A.TABLESPACE_NAME = B.TABLESPACE_NAME(+)
+ORDER BY 5 DESC;
 
-    <style>
-        body { padding: 20px; background-color: #f0f2f5; }
-        .intro-box {
-            background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px;
-        }
-        .btn-approve {
-            background-color: #2196F3 !important;
-            border-color: #2196F3 !important;
-        }
-        .btn-approve .x-btn-inner {
-            color: #fff !important;
-            font-weight: bold !important;
-        }
-        /* 그리드 내 입력창 스타일 */
-        .x-grid-editor .x-form-text {
-            text-align: left;
-        }
-    </style>
 
-    <script>
-        Ext.onReady(function () {
-            
-            // 1. 모델 정의
-            Ext.define('MroSimilarModel', {
-                extend: 'Ext.data.Model',
-                fields: [
-                    { name: 'REQ_NO', type: 'string' },       // 요청번호 (그룹핑 기준)
-                    { name: 'REQ_MAT_NAME', type: 'string' }, // 요청자재명
-                    { name: 'SIM_MAT_ID', type: 'string' },   // 유사자재코드
-                    { name: 'SIM_MAT_NAME', type: 'string' }, // 유사자재명
-                    { name: 'SIMILARITY_PCT', type: 'int' },  // 유사도
-                    { name: 'REASON', type: 'string' }        // 사유
-                ]
-            });
 
-            // 2. 스토어 정의 (데이터 포함)
-            var similarStore = Ext.create('Ext.data.Store', {
-                model: 'MroSimilarModel',
-                groupField: 'REQ_NO', // ★ 핵심: 요청번호 기준으로 그룹핑
-                data: [
-                    // 그룹 1: 요청번호 2024001
-                    { REQ_NO: 'REQ-2024001', REQ_MAT_NAME: 'Fitting AC10-R1/4', SIM_MAT_ID: 'MAT-1001', SIM_MAT_NAME: 'Fitting AC10-R1/8', SIMILARITY_PCT: 95, REASON: '' },
-                    { REQ_NO: 'REQ-2024001', REQ_MAT_NAME: 'Fitting AC10-R1/4', SIM_MAT_ID: 'MAT-1002', SIM_MAT_NAME: 'Fitting AC10-TypeA', SIMILARITY_PCT: 88, REASON: '' },
-                    
-                    // 그룹 2: 요청번호 2024002
-                    { REQ_NO: 'REQ-2024002', REQ_MAT_NAME: 'Samsung NoteBook 15', SIM_MAT_ID: 'MAT-5050', SIM_MAT_NAME: 'LG NoteBook 15', SIMILARITY_PCT: 60, REASON: '' },
-                    
-                    // 그룹 3: 요청번호 2024003 (유사도 100% 케이스)
-                    { REQ_NO: 'REQ-2024003', REQ_MAT_NAME: 'Ball Pen (Black)', SIM_MAT_ID: 'MAT-9999', SIM_MAT_NAME: 'Ball Pen (Black)', SIMILARITY_PCT: 100, REASON: '' }
-                ]
-            });
-
-            // 메인 화면 버튼 렌더링
-            Ext.create('Ext.container.Viewport', {
-                layout: {
-                    type: 'vbox',
-                    align: 'center',
-                    pack: 'center'
-                },
-                items: [{
-                    xtype: 'component',
-                    html: '<div class="intro-box"><h2>MRO 일괄 결재 화면 시뮬레이션</h2><p>아래 버튼을 클릭하여 결재를 시도해보세요.<br>유사 자재가 발견되면 팝업이 뜹니다.</p></div>'
-                }, {
-                    xtype: 'button',
-                    text: '일괄 결재 (3건 선택됨)',
-                    scale: 'large',
-                    width: 200,
-                    height: 50,
-                    cls: 'btn-approve',
-                    handler: function() {
-                        showSimilarCheckPopup(similarStore);
-                    }
-                }]
-            });
-
-            // 3. 팝업 생성 함수
-            function showSimilarCheckPopup(store) {
-                
-                var win = Ext.create('Ext.window.Window', {
-                    title: '⚠️ 중복 의심 자재 확인',
-                    width: 950,
-                    height: 550,
-                    layout: 'fit',
-                    modal: true,
-                    animateTarget: this, // 버튼에서 팝업이 나오는 애니메이션
-                    
-                    items: [{
-                        xtype: 'grid',
-                        store: store,
-                        columnLines: true,
-                        
-                        // ★ 핵심: 셀 에디팅 플러그인
-                        plugins: [
-                            Ext.create('Ext.grid.plugin.CellEditing', {
-                                clicksToEdit: 1,
-                                listeners: {
-                                    // [UX] 사유 동기화 로직
-                                    edit: function(editor, context) {
-                                        var rec = context.record;
-                                        var newVal = context.value;
-                                        var reqNo = rec.get('REQ_NO');
-                                        
-                                        // 같은 그룹(요청번호)의 모든 행에 사유 복사
-                                        context.grid.getStore().each(function(item){
-                                            if(item.get('REQ_NO') === reqNo){
-                                                item.set('REASON', newVal);
-                                            }
-                                        });
-                                    }
-                                }
-                            })
-                        ],
-
-                        // ★ 핵심: 그룹핑 설정
-                        features: [{
-                            ftype: 'grouping',
-                            // 그룹 헤더 템플릿: 요청정보를 헤더에 표시
-                            groupHeaderTpl: [
-                                '<div style="padding:5px;">',
-                                '<span style="color:#333; font-weight:bold; font-size:14px;">[{name}]</span>',
-                                ' <span style="color:#555;">요청 자재명:</span> <span style="color:#000; font-weight:bold; font-size:14px; text-decoration:underline;">{[values.rows[0].data.REQ_MAT_NAME]}</span>',
-                                '<span style="float:right; color:red; margin-right:10px;">(유사: {rows.length}건)</span>',
-                                '</div>'
-                            ].join(''),
-                            hideGroupedHeader: true,
-                            startCollapsed: false,
-                            enableGroupingMenu: false
-                        }],
-
-                        columns: [
-                            { 
-                                header: '유사 자재코드', 
-                                dataIndex: 'SIM_MAT_ID', 
-                                width: 130,
-                                align: 'center',
-                                renderer: function(v) { return '<b>' + v + '</b>'; }
-                            },
-                            { 
-                                header: '기존 자재명 (유사품)', 
-                                dataIndex: 'SIM_MAT_NAME', 
-                                flex: 1,
-                                cellWrap: true
-                            },
-                            { 
-                                header: '유사도', 
-                                dataIndex: 'SIMILARITY_PCT', 
-                                width: 100, 
-                                align: 'center',
-                                renderer: function(v) {
-                                    if (v >= 100) return '<span style="color:red; font-weight:bold;">' + v + '% (중복)</span>';
-                                    if (v >= 90) return '<span style="color:orange; font-weight:bold;">' + v + '% (유사)</span>';
-                                    return v + '%';
-                                }
-                            },
-                            {
-                                header: '📝 진행 사유 입력 (클릭)',
-                                dataIndex: 'REASON',
-                                flex: 1.5,
-                                tdCls: 'x-grid-cell-reason', 
-                                editor: {
-                                    xtype: 'textfield',
-                                    allowBlank: false,
-                                    emptyText: '사유를 입력하세요 (예: 규격 상이)'
-                                },
-                                renderer: function(v, meta) {
-                                    if(!v) {
-                                        meta.style = "background-color: #fff0f0; border: 1px dashed #ffcccc;";
-                                        return '<span style="color:#999; font-style:italic;">[필수] 클릭하여 사유 입력...</span>';
-                                    }
-                                    meta.style = "background-color: #f0fdf4;";
-                                    return '<span style="color:#000;">' + v + '</span>';
-                                }
-                            }
-                        ],
-                        
-                        viewConfig: {
-                            stripeRows: true,
-                            enableTextSelection: true
-                        }
-                    }],
-                    
-                    dockedItems: [{
-                        xtype: 'toolbar',
-                        dock: 'bottom',
-                        ui: 'footer',
-                        padding: '10 20 10 20',
-                        items: [
-                            {
-                                xtype: 'component',
-                                html: '<span style="color:#666;">ℹ️ 동일 요청 건(그룹) 내에서는 사유가 자동으로 동기화됩니다.</span>'
-                            },
-                            '->',
-                            {
-                                text: '반려 (입력 취소)',
-                                width: 120,
-                                handler: function() { win.close(); }
-                            },
-                            {
-                                text: '사유 저장 및 승인',
-                                width: 150,
-                                scale: 'medium',
-                                formBind: true,
-                                cls: 'btn-approve',
-                                handler: function() {
-                                    var store = win.down('grid').getStore();
-                                    var missingReasons = [];
-                                    var checkedReqs = [];
-                                    
-                                    // 유효성 검사
-                                    store.each(function(rec) {
-                                        var reqNo = rec.get('REQ_NO');
-                                        if(Ext.Array.indexOf(checkedReqs, reqNo) === -1) {
-                                            checkedReqs.push(reqNo);
-                                            var reason = rec.get('REASON');
-                                            if (!reason || reason.trim() === '') {
-                                                missingReasons.push(reqNo);
-                                            }
-                                        }
-                                    });
-
-                                    if (missingReasons.length > 0) {
-                                        Ext.Msg.alert('입력 확인', '<span style="color:red;">모든 요청 건에 대해 사유를 입력해야 합니다.</span><br><br>미입력 건수: ' + missingReasons.length + '건');
-                                        return;
-                                    }
-
-                                    Ext.Msg.confirm('승인 확인', '입력하신 사유로 승인을 진행하시겠습니까?', function(btn){
-                                        if(btn === 'yes'){
-                                            Ext.Msg.alert('완료', '정상적으로 처리되었습니다.', function(){
-                                                win.close();
-                                            });
-                                        }
-                                    });
-                                }
-                            }
-                        ]
-                    }]
-                }).show();
-            }
-        });
-    </script>
-</head>
-<body>
-</body>
-</html>
-
+SELECT 
+    FILE_NAME "파일명",
+    TABLESPACE_NAME "테이블스페이스명",
+    ROUND(BYTES / 1024 / 1024, 2) "현재 할당량(MB)",
+    AUTOEXTENSIBLE "자동확장여부",
+    ROUND(MAXBYTES / 1024 / 1024, 2) "최대 확장가능량(MB)"
+FROM 
+    DBA_DATA_FILES
+ORDER BY TABLESPACE_NAME;
