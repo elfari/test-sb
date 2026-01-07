@@ -3,89 +3,72 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
 
-public class OracleMultiUserCheck {
-
-    // 접속할 DB URL (모든 계정이 같은 DB 인스턴스에 있다면 공통 사용)
-    private static final String DB_URL = "jdbc:oracle:thin:@localhost:1521:XE"; 
-    
-    // 요청하신 '한방 쿼리' (USER_EXTENTS + USER_FREE_SPACE)
-    private static final String QUERY = 
-        "SELECT " +
-        "    NVL(E.TABLESPACE_NAME, F.TABLESPACE_NAME) AS TS_NAME, " +
-        "    ROUND(NVL(E.MY_USED_BYTES, 0) / 1024 / 1024, 2) AS MY_USED_MB, " +
-        "    ROUND(NVL(F.TOTAL_FREE_BYTES, 0) / 1024 / 1024, 2) AS TS_FREE_MB " +
-        "FROM " +
-        "    (SELECT TABLESPACE_NAME, SUM(BYTES) AS MY_USED_BYTES " +
-        "     FROM USER_EXTENTS " +
-        "     GROUP BY TABLESPACE_NAME) E " +
-        "    FULL OUTER JOIN " +
-        "    (SELECT TABLESPACE_NAME, SUM(BYTES) AS TOTAL_FREE_BYTES " +
-        "     FROM USER_FREE_SPACE " +
-        "     GROUP BY TABLESPACE_NAME) F " +
-        "    ON E.TABLESPACE_NAME = F.TABLESPACE_NAME " +
-        "ORDER BY TS_NAME";
+public class OracleSimpleCheck {
 
     public static void main(String[] args) {
-        // 1. 점검할 10개 계정 정보 설정
-        List<DbUser> users = new ArrayList<>();
-        // 예시: 계정 10개 추가 (실제 정보로 수정 필요)
-        for (int i = 1; i <= 10; i++) {
-            users.add(new DbUser("USER" + String.format("%02d", i), "PASSWORD" + i));
-        }
+        
+        // 1. DB 연결 정보
+        String dbUrl = "jdbc:oracle:thin:@localhost:1521:XE";
+        
+        // 2. 계정 정보 배열 { "아이디", "비밀번호" }
+        String[][] accounts = {
+            {"USER01", "pass1234"},
+            {"USER02", "pass1234"},
+            {"USER03", "pass1234"},
+            {"USER04", "pass1234"},
+            {"USER05", "pass1234"},
+            // ... 필요한 만큼 추가
+        };
 
-        System.out.println("==================================================================================");
-        System.out.println(String.format("%-15s | %-20s | %-15s | %-15s", "ACCOUNT", "TABLESPACE", "MY_USED(MB)", "TS_FREE(MB)"));
-        System.out.println("==================================================================================");
+        // 3. 실행할 쿼리 (USER_EXTENTS + USER_FREE_SPACE)
+        String sql = 
+            "SELECT " +
+            "    NVL(E.TABLESPACE_NAME, F.TABLESPACE_NAME) AS TS_NAME, " +
+            "    ROUND(NVL(E.MY_USED_BYTES, 0) / 1024 / 1024, 2) AS MY_USED_MB, " +
+            "    ROUND(NVL(F.TOTAL_FREE_BYTES, 0) / 1024 / 1024, 2) AS TS_FREE_MB " +
+            "FROM " +
+            "    (SELECT TABLESPACE_NAME, SUM(BYTES) AS MY_USED_BYTES " +
+            "     FROM USER_EXTENTS " +
+            "     GROUP BY TABLESPACE_NAME) E " +
+            "    FULL OUTER JOIN " +
+            "    (SELECT TABLESPACE_NAME, SUM(BYTES) AS TOTAL_FREE_BYTES " +
+            "     FROM USER_FREE_SPACE " +
+            "     GROUP BY TABLESPACE_NAME) F " +
+            "    ON E.TABLESPACE_NAME = F.TABLESPACE_NAME " +
+            "ORDER BY TS_NAME";
 
-        // 2. 순차 접속 및 쿼리 실행
-        for (DbUser user : users) {
-            checkUserStorage(user);
-        }
-    }
+        System.out.println("----------------------------------------------------------------------");
+        System.out.printf("%-10s | %-20s | %12s | %12s%n", "USER", "TABLESPACE", "MY_USED(MB)", "TS_FREE(MB)");
+        System.out.println("----------------------------------------------------------------------");
 
-    private static void checkUserStorage(DbUser user) {
-        // 18년차시니 DriverManager 방식은 아실 테고, 실제 운영 환경이면 Connection Pool(HikariCP 등)을 쓰시겠지만
-        // 배치성 단건 조회라 간단히 드라이버 매니저로 구현했습니다.
-        try (Connection conn = DriverManager.getConnection(DB_URL, user.getUsername(), user.getPassword());
-             PreparedStatement pstmt = conn.prepareStatement(QUERY);
-             ResultSet rs = pstmt.executeQuery()) {
+        // 4. 배열 순회하며 접속 및 조회
+        for (String[] account : accounts) {
+            String userId = account[0];
+            String userPw = account[1];
 
-            boolean hasData = false;
-            while (rs.next()) {
-                hasData = true;
-                String tsName = rs.getString("TS_NAME");
-                double myUsed = rs.getDouble("MY_USED_MB");
-                double tsFree = rs.getDouble("TS_FREE_MB");
+            try (Connection conn = DriverManager.getConnection(dbUrl, userId, userPw);
+                 PreparedStatement pstmt = conn.prepareStatement(sql);
+                 ResultSet rs = pstmt.executeQuery()) {
 
-                System.out.println(String.format("%-15s | %-20s | %15.2f | %15.2f", 
-                        user.getUsername(), tsName, myUsed, tsFree));
+                boolean hasData = false;
+                while (rs.next()) {
+                    hasData = true;
+                    System.out.printf("%-10s | %-20s | %12.2f | %12.2f%n",
+                            userId, 
+                            rs.getString("TS_NAME"), 
+                            rs.getDouble("MY_USED_MB"), 
+                            rs.getDouble("TS_FREE_MB"));
+                }
+                
+                if (!hasData) {
+                    System.out.printf("%-10s | %-20s | %12s | %12s%n", userId, "NO DATA", "-", "-");
+                }
+
+            } catch (SQLException e) {
+                // 접속 실패 시 로그만 찍고 다음 계정으로 계속 진행
+                System.err.printf("[ERROR] %s 접속 실패: %s%n", userId, e.getMessage());
             }
-            
-            if (!hasData) {
-                System.out.println(String.format("%-15s | %-20s | %15s | %15s", 
-                        user.getUsername(), "NO DATA / NO PERM", "-", "-"));
-            }
-
-        } catch (SQLException e) {
-            System.err.println("Error connecting to " + user.getUsername() + ": " + e.getMessage());
-            // 한 계정이 실패해도 다음 계정은 돌아야 하므로 예외를 여기서 먹고 넘어갑니다.
         }
-    }
-
-    // 계정 정보용 Inner Class
-    static class DbUser {
-        private String username;
-        private String password;
-
-        public DbUser(String username, String password) {
-            this.username = username;
-            this.password = password;
-        }
-
-        public String getUsername() { return username; }
-        public String getPassword() { return password; }
     }
 }
