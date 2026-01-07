@@ -1,28 +1,31 @@
 SELECT 
-    A.TABLESPACE_NAME "테이블스페이스명",
-    ROUND(A.BYTES / 1024 / 1024, 2) "할당된 용량(MB)",
-    ROUND((A.BYTES - B.FREE) / 1024 / 1024, 2) "사용 중인 용량(MB)",
-    ROUND(B.FREE / 1024 / 1024, 2) "여유 공간(MB)",
-    ROUND((A.BYTES - B.FREE) / A.BYTES * 100, 2) "사용률(%)"
+    -- 1. 테이블스페이스 이름 (양쪽 중 존재하는 것 표시)
+    NVL(U.TABLESPACE_NAME, Q.TABLESPACE_NAME) AS "테이블스페이스",
+
+    -- 2. 할당된 한도 (Quota)
+    CASE 
+        WHEN Q.MAX_BYTES = -1 THEN '제한없음(Unlimited)'
+        WHEN Q.MAX_BYTES IS NOT NULL THEN TO_CHAR(ROUND(Q.MAX_BYTES / 1024 / 1024, 2)) || ' MB'
+        ELSE '제한없음(System Priv)' -- 데이터는 있는데 쿼터 정보가 없으면 시스템 권한으로 무제한인 상태
+    END AS "할당된 한도",
+
+    -- 3. 현재 실제 사용량 (Segments 집계)
+    ROUND(NVL(U.USED_BYTES, 0) / 1024 / 1024, 2) AS "현재 사용량(MB)",
+
+    -- 4. 한도 대비 사용률 (%)
+    CASE 
+        WHEN Q.MAX_BYTES > 0 THEN ROUND(NVL(U.USED_BYTES, 0) / Q.MAX_BYTES * 100, 2)
+        ELSE 0 
+    END AS "사용률(%)"
+
 FROM 
-    (SELECT TABLESPACE_NAME, SUM(BYTES) BYTES 
-     FROM DBA_DATA_FILES 
-     GROUP BY TABLESPACE_NAME) A,
-    (SELECT TABLESPACE_NAME, SUM(BYTES) FREE 
-     FROM DBA_FREE_SPACE 
-     GROUP BY TABLESPACE_NAME) B
-WHERE 
-    A.TABLESPACE_NAME = B.TABLESPACE_NAME(+)
-ORDER BY 5 DESC;
+    -- [A] 실제 사용량 집계 (내 객체들이 차지하는 크기)
+    (SELECT TABLESPACE_NAME, SUM(BYTES) AS USED_BYTES 
+     FROM USER_SEGMENTS 
+     GROUP BY TABLESPACE_NAME) U
 
+    -- [B] 할당 한도 정보 (관리자가 설정한 Quota)
+    FULL OUTER JOIN USER_TS_QUOTAS Q 
+    ON U.TABLESPACE_NAME = Q.TABLESPACE_NAME
 
-
-SELECT 
-    FILE_NAME "파일명",
-    TABLESPACE_NAME "테이블스페이스명",
-    ROUND(BYTES / 1024 / 1024, 2) "현재 할당량(MB)",
-    AUTOEXTENSIBLE "자동확장여부",
-    ROUND(MAXBYTES / 1024 / 1024, 2) "최대 확장가능량(MB)"
-FROM 
-    DBA_DATA_FILES
-ORDER BY TABLESPACE_NAME;
+ORDER BY "현재 사용량(MB)" DESC;
