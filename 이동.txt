@@ -1,5 +1,63 @@
-SELECT /*+ INDEX_DESC(A IDX_PROC_HIST_01) */ 
-       MAX(STARTEDDTIME) 
-  FROM PROCINSTANCEHISTORY A
- WHERE PROCDEFID = '특정ID';
--- (참고: 적절한 인덱스가 있다면 힌트 없이도 최적화됩니다)
+CREATE OR REPLACE PROCEDURE P_MRO_SIMILAR_CHECK_MAIN (
+    P_REQ_NO    IN  VARCHAR2,       -- 요청 번호
+    P_MODE      IN  VARCHAR2,       -- 'INIT': 초기/전체검색, 'INC': 증분검색
+    O_FOUND_CNT OUT NUMBER          -- (출력) 이번 실행에서 찾아낸 유사자재 건수
+) IS
+    V_REQ_ITEM_NAME   MRO_INFO.ITEM_NAME_EN%TYPE;
+    V_LAST_CHECK_DT   DATE;
+    V_SEARCH_START_DT DATE;
+BEGIN
+    O_FOUND_CNT := 0;
+
+    -- 1. 요청 자재 정보 및 마지막 체크 시간 조회
+    BEGIN
+        SELECT ITEM_NAME_EN, SIMILAR_CHECK_DTIME
+          INTO V_REQ_ITEM_NAME, V_LAST_CHECK_DT
+          FROM MRO_INFO
+         WHERE REQ_NO = P_REQ_NO;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RETURN; -- 대상 데이터 없으면 종료
+    END;
+
+    -- 2. 검색 모드에 따른 시작 시간(Start Date) 설정
+    IF P_MODE = 'INIT' OR V_LAST_CHECK_DT IS NULL THEN
+        -- 초기 모드이거나, 한 번도 체크한 적이 없으면 '아주 과거'부터 전체 검색
+        V_SEARCH_START_DT := TO_DATE('19000101', 'YYYYMMDD');
+    ELSE
+        -- 증분 모드('INC')라면 '마지막 체크 시간' 이후 데이터만 검색
+        V_SEARCH_START_DT := V_LAST_CHECK_DT;
+    END IF;
+
+    -- 3. 유사 자재 검색 및 저장 (핵심 로직)
+    INSERT INTO MRO_INFO_SIMILAR (
+        REQ_NO, SIMILAR_MASTID, SIMILAR_PCT, CREATED_DATE
+    )
+    SELECT P_REQ_NO,
+           M.MASTID,
+           FN_SIMILAR_PCT(V_REQ_ITEM_NAME, M.ITEM_NAME_EN),
+           SYSDATE
+      FROM MASTOUT M
+     WHERE M.CREATIONDTIME > V_SEARCH_START_DT  -- 설정된 시간 이후 생성된 것만
+       -- [성능 최적화] 전체 스캔 방지용 1차 필터 (예: 앞 2글자 일치)
+       AND M.ITEM_NAME_EN LIKE SUBSTR(V_REQ_ITEM_NAME, 1, 2) || '%' 
+       -- [정밀 비교] 함수 실행
+       AND FN_SIMILAR_PCT(V_REQ_ITEM_NAME, M.ITEM_NAME_EN) >= 90;
+
+    -- 4. 처리 결과 저장
+    O_FOUND_CNT := SQL%ROWCOUNT; -- INSERT된 건수 저장
+
+    -- 5. 마지막 체크 시간 업데이트
+    UPDATE MRO_INFO
+       SET SIMILAR_CHECK_DTIME = SYSDATE
+     WHERE REQ_NO = P_REQ_NO;
+    
+    -- 주의: COMMIT은 호출하는 쪽(Batch Loop 또는 Java Service)에서 제어하는 것이 좋습니다.
+    -- 필요하다면 여기에 COMMIT; 추가
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE; -- 에러를 호출한 쪽에 알림
+END P_MRO_SIMILAR_CHECK_MAIN;
+/
