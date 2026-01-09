@@ -2,12 +2,24 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>ExtJS 4.2 Grouped Grid with Controls in Header</title>
+    <title>ExtJS 4.2 Grouped Grid Custom Header</title>
 
-    <link rel="stylesheet" type="text/css" 
-          href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
-    <script type="text/javascript" 
-            src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
+    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
+
+    <style>
+        /* 그룹 헤더의 접기/펼치기 아이콘 숨김 및 커서 변경 */
+        .x-grid-group-hd {
+            cursor: default !important;
+        }
+        .x-grid-group-hd .x-grid-group-icon {
+            display: none !important;
+        }
+        /* 그룹 헤더 텍스트 수직 정렬 보정 */
+        .x-grid-group-title {
+            line-height: 22px; 
+        }
+    </style>
 
     <script type="text/javascript">
         Ext.onReady(function() {
@@ -19,11 +31,11 @@
                 data: {
                     employees: [
                         { name: '김철수', seniority: 7, department: '경영' },
-                        { name: '홍길동', seniority: 10, department: '경영' },
                         { name: '이영희', seniority: 2, department: '영업' },
                         { name: '박민수', seniority: 3, department: '영업' },
                         { name: '최지연', seniority: 4, department: '회계' },
-                        { name: '정하나', seniority: 5, department: '회계' }
+                        { name: '정하나', seniority: 5, department: '회계' },
+                        { name: '홍길동', seniority: 10, department: '경영' }
                     ]
                 },
                 proxy: {
@@ -42,75 +54,85 @@
                 ],
                 features: [{
                     ftype: 'grouping',
+                    // [변경] 그룹 헤더 템플릿: 우측에 컨트롤이 들어갈 placeholder(div) 추가
+                    // {name}은 그룹명(부서명)입니다. ID 중복 방지를 위해 그룹명을 ID에 포함시킵니다.
                     groupHeaderTpl: [
-                        '<div class="group-header-wrapper" style="display:flex; justify-content:space-between; align-items:center; width:100%;">',
-                        '    <span class="group-title">{name} ({rows.length} 명)</span>',
-                        '    <div class="group-controls" style="display:flex; gap:8px;">',
-                        '        <div id="select-{name}"></div>',
-                        '        <div id="input-{name}"></div>',
+                        '<div style="width:100%; overflow:hidden;">',
+                        '    <div style="float:left; line-height:24px;">{name} ({rows.length} 명)</div>',
+                        '    <div style="float:right; margin-right:10px;">',
+                        '        <div id="header-input-{name}" style="display:inline-block; vertical-align:middle; margin-right:5px;"></div>',
+                        '        <div id="header-combo-{name}" style="display:inline-block; vertical-align:middle;"></div>',
                         '    </div>',
                         '</div>'
-                    ].join(''),
-                    startCollapsed: false
+                    ],
+                    startCollapsed: false,
+                    enableGroupingMenu: false, // 그룹 메뉴 비활성화
+                    listeners: {
+                        // [변경] 헤더 클릭 시 접기/펼치기 동작 차단
+                        groupclick: function(view, node, group, e) {
+                            return false; 
+                        }
+                    }
                 }],
-                height: 500,
-                width: 800,
+                height: 400,
+                width: 600,
                 renderTo: Ext.getBody(),
                 viewConfig: {
                     listeners: {
-                        // 그룹이 확장될 때마다 컨트롤 생성/갱신
-                        groupexpand: function(view, node, group) {
-                            createControlsForGroup(group);
+                        // [변경] 뷰가 처음 그려질 때와 갱신될 때(정렬 등) 컨트롤 렌더링 실행
+                        viewready: function(view) {
+                            renderGroupControls(view);
                         },
-                        // 그리드 처음 렌더링 후 모든 그룹에 대해 한 번 실행
                         refresh: function(view) {
-                            if (this.controlsCreated) return;
-                            this.controlsCreated = true;
-
-                            var groups = employeeStore.getGroups();
-                            // ExtJS 4.2에서는 groups.items 배열을 순회
-                            Ext.each(groups.items, function(group) {
-                                createControlsForGroup(group.name);
-                            });
+                            renderGroupControls(view);
                         }
                     }
                 }
             });
 
-            // 그룹별 컨트롤 생성 함수 (중복 방지 포함)
-            function createControlsForGroup(groupName) {
-                var selectEl = Ext.get('select-' + groupName);
-                var inputEl = Ext.get('input-' + groupName);
+            // 그룹 헤더에 컴포넌트를 렌더링하는 함수
+            function renderGroupControls(view) {
+                var store = view.getStore();
+                var groups = store.getGroups(); // 현재 그룹 정보 가져오기
 
-                if (selectEl && !selectEl.hasCls('control-created')) {
-                    new Ext.form.field.ComboBox({
-                        renderTo: selectEl,
-                        width: 100,
-                        store: ['전체', '승인', '거부'],
-                        value: '전체',
-                        editable: false,
-                        listeners: {
-                            change: function(combo, newValue) {
-                                console.log('그룹 [' + groupName + '] 선택:', newValue);
+                Ext.each(groups, function(group) {
+                    var groupName = group.name;
+                    
+                    // 1. 콤보박스 렌더링
+                    // 특수문자나 공백이 있을 경우 id 처리가 필요할 수 있으나 여기선 단순 문자열로 가정
+                    var comboContainer = Ext.get('header-combo-' + groupName);
+                    
+                    // 컨테이너가 존재하고, 내용이 비어있을 때만 렌더링 (중복 방지)
+                    if (comboContainer && comboContainer.dom.innerHTML === "") {
+                        Ext.create('Ext.form.field.ComboBox', {
+                            renderTo: comboContainer,
+                            width: 100,
+                            store: ['승인', '반려', '대기'],
+                            emptyText: '상태 선택',
+                            editable: false,
+                            listeners: {
+                                change: function(field, newValue) {
+                                    console.log(groupName + ' 콤보 변경:', newValue);
+                                }
                             }
-                        }
-                    });
-                    selectEl.addCls('control-created');
-                }
+                        });
+                    }
 
-                if (inputEl && !inputEl.hasCls('control-created')) {
-                    new Ext.form.field.Text({
-                        renderTo: inputEl,
-                        width: 120,
-                        emptyText: '메모 입력...',
-                        listeners: {
-                            change: function(field, newValue) {
-                                console.log('그룹 [' + groupName + '] 입력:', newValue);
+                    // 2. 인풋박스 렌더링
+                    var inputContainer = Ext.get('header-input-' + groupName);
+                    if (inputContainer && inputContainer.dom.innerHTML === "") {
+                        Ext.create('Ext.form.field.Text', {
+                            renderTo: inputContainer,
+                            width: 120,
+                            emptyText: '메모 입력',
+                            listeners: {
+                                change: function(field, newValue) {
+                                    console.log(groupName + ' 입력:', newValue);
+                                }
                             }
-                        }
-                    });
-                    inputEl.addCls('control-created');
-                }
+                        });
+                    }
+                });
             }
         });
     </script>
