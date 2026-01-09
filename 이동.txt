@@ -2,75 +2,6 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>ExtJS 4.2 Grouped Grid Sample</title>
-
-    <!-- ExtJS 4.2 CSS -->
-    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
-
-    <!-- ExtJS 4.2 Core -->
-    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
-
-    <script type="text/javascript">
-        Ext.onReady(function() {
-
-            // 데이터 스토어 정의 (groupField로 그룹화 지정)
-            var employeeStore = Ext.create('Ext.data.Store', {
-                storeId: 'employeeStore',
-                fields: ['name', 'seniority', 'department'],
-                groupField: 'department',  // 이 필드로 그룹화
-                data: {
-                    employees: [
-                        { name: '김철수', seniority: 7, department: '경영' },
-                        { name: '이영희', seniority: 2, department: '영업' },
-                        { name: '박민수', seniority: 3, department: '영업' },
-                        { name: '최지연', seniority: 4, department: '회계' },
-                        { name: '정하나', seniority: 5, department: '회계' },
-                        { name: '홍길동', seniority: 10, department: '경영' }
-                    ]
-                },
-                proxy: {
-                    type: 'memory',
-                    reader: {
-                        type: 'json',
-                        root: 'employees'
-                    }
-                }
-            });
-
-            // 그룹화된 그리드 패널
-            Ext.create('Ext.grid.Panel', {
-                title: '직원 목록 (부서별 그룹화)',
-                store: employeeStore,
-                columns: [
-                    { text: '이름', dataIndex: 'name', flex: 1 },
-                    { text: '근속년수', dataIndex: 'seniority', width: 100 },
-                    { text: '부서', dataIndex: 'department', width: 120 }
-                ],
-                features: [{
-                    ftype: 'grouping',
-                    groupHeaderTpl: '{name} ({rows.length} 명)',  // 그룹 헤더 템플릿 (그룹명 + 건수)
-                    startCollapsed: false   // 처음에 그룹 펼쳐진 상태 (true로 하면 접힌 상태)
-                }],
-                height: 400,
-                width: 600,
-                renderTo: Ext.getBody()
-            });
-        });
-    </script>
-</head>
-<body>
-</body>
-</html>
-
-
-
-
-
-
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
     <title>ExtJS 4.2 Grouped Grid with Controls in Header</title>
 
     <link rel="stylesheet" type="text/css" 
@@ -125,66 +56,65 @@
                 height: 500,
                 width: 800,
                 renderTo: Ext.getBody(),
-                listeners: {
-                    // 그룹 헤더가 렌더링된 후에 컨트롤 생성
-                    afterlayout: function() {
-                        // 한 번만 실행되도록 플래그
-                        if (this.controlsCreated) return;
-                        this.controlsCreated = true;
+                viewConfig: {
+                    listeners: {
+                        // 그룹이 확장될 때마다 컨트롤 생성/갱신
+                        groupexpand: function(view, node, group) {
+                            createControlsForGroup(group);
+                        },
+                        // 그리드 처음 렌더링 후 모든 그룹에 대해 한 번 실행
+                        refresh: function(view) {
+                            if (this.controlsCreated) return;
+                            this.controlsCreated = true;
 
-                        var groupingFeature = this.features[0];
-                        var groups = this.store.getGroups();
-
-                        groups.each(function(group) {
-                            var groupName = group.name;
-                            var selectEl = Ext.get('select-' + groupName);
-                            var inputEl = Ext.get('input-' + groupName);
-
-                            if (selectEl && !selectEl.component) {
-                                // Select box 생성
-                                new Ext.form.field.ComboBox({
-                                    renderTo: selectEl,
-                                    width: 100,
-                                    store: ['전체', '승인', '거부'],
-                                    value: '전체',
-                                    editable: false,
-                                    listeners: {
-                                        change: function(combo, newValue) {
-                                            console.log('그룹 [' + groupName + '] 선택:', newValue);
-                                            // 여기서 그룹별 처리 로직 구현 가능
-                                        }
-                                    }
-                                });
-                                selectEl.component = true;
-                            }
-
-                            if (inputEl && !inputEl.component) {
-                                // Text input 생성
-                                new Ext.form.field.Text({
-                                    renderTo: inputEl,
-                                    width: 120,
-                                    emptyText: '메모 입력...',
-                                    listeners: {
-                                        change: function(field, newValue) {
-                                            console.log('그룹 [' + groupName + '] 입력:', newValue);
-                                            // 그룹별 메모 저장 등 처리 가능
-                                        }
-                                    }
-                                });
-                                inputEl.component = true;
-                            }
-                        });
+                            var groups = employeeStore.getGroups();
+                            // ExtJS 4.2에서는 groups.items 배열을 순회
+                            Ext.each(groups.items, function(group) {
+                                createControlsForGroup(group.name);
+                            });
+                        }
                     }
                 }
             });
+
+            // 그룹별 컨트롤 생성 함수 (중복 방지 포함)
+            function createControlsForGroup(groupName) {
+                var selectEl = Ext.get('select-' + groupName);
+                var inputEl = Ext.get('input-' + groupName);
+
+                if (selectEl && !selectEl.hasCls('control-created')) {
+                    new Ext.form.field.ComboBox({
+                        renderTo: selectEl,
+                        width: 100,
+                        store: ['전체', '승인', '거부'],
+                        value: '전체',
+                        editable: false,
+                        listeners: {
+                            change: function(combo, newValue) {
+                                console.log('그룹 [' + groupName + '] 선택:', newValue);
+                            }
+                        }
+                    });
+                    selectEl.addCls('control-created');
+                }
+
+                if (inputEl && !inputEl.hasCls('control-created')) {
+                    new Ext.form.field.Text({
+                        renderTo: inputEl,
+                        width: 120,
+                        emptyText: '메모 입력...',
+                        listeners: {
+                            change: function(field, newValue) {
+                                console.log('그룹 [' + groupName + '] 입력:', newValue);
+                            }
+                        }
+                    });
+                    inputEl.addCls('control-created');
+                }
+            }
         });
     </script>
 </head>
 <body>
 </body>
 </html>
-
-
-
-
-
