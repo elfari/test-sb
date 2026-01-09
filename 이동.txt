@@ -516,3 +516,128 @@
 <body></body>
 </html>
 
+
+
+
+
+
+
+
+Ext.onReady(function() {
+    
+    // 1. 데이터 저장소 (입력값 유지용)
+    var groupData = {}; 
+
+    // 2. 컴포넌트 관리 (메모리 누수 방지)
+    var activeControls = {}; 
+
+    var store = Ext.create('Ext.data.Store', {
+        fields: ['name', 'dept'],
+        groupField: 'dept',
+        data: [
+            { name: '김철수', dept: '개발팀' }, { name: '이영희', dept: '개발팀' },
+            { name: '박민수', dept: '인사팀' }, { name: '최지우', dept: '인사팀' },
+            { name: '정하나', dept: '영업팀' }, { name: '강동원', dept: '영업팀' }
+        ]
+    });
+
+    Ext.create('Ext.grid.Panel', {
+        renderTo: Ext.getBody(),
+        width: 600,
+        height: 400,
+        store: store,
+        title: '접기/펼치기 비활성화 그룹 그리드',
+        
+        columns: [
+            { text: '이름', dataIndex: 'name', flex: 1 },
+            { text: '부서', dataIndex: 'dept', width: 100 }
+        ],
+
+        features: [{
+            ftype: 'grouping',
+            startCollapsed: false,   // 처음부터 펼쳐둠
+            enableGroupingMenu: false, // 메뉴에서 그룹핑 제어 끔
+            
+            // [핵심 1] 헤더 클릭 시 접히는 동작 자체를 차단
+            collapsible: false, 
+
+            // 헤더 템플릿
+            groupHeaderTpl: [
+                '<div style="display:flex; justify-content:space-between; align-items:center;">',
+                '   <span style="cursor:default;">{name} ({rows.length})</span>', // 커서 모양 변경
+                '   <div id="header-{name}" style="display:flex; gap:5px; margin-right:10px;"></div>',
+                '</div>'
+            ].join(''),
+
+            // [핵심 2] 그룹 헤더 클릭 이벤트 리스너 오버라이드 (완벽 차단)
+            listeners: {
+                groupclick: function(view, node, group, e, eOpts) {
+                    return false; // 클릭 이벤트 무시
+                }
+            }
+        }],
+
+        viewConfig: {
+            listeners: {
+                // 화면 갱신될 때만 컨트롤 다시 그리기
+                refresh: function() { 
+                    Ext.defer(renderAllControls, 50); 
+                }
+            }
+        }
+    });
+
+    // --- 렌더링 로직 (이전과 동일하지만 훨씬 안정적) ---
+
+    function renderAllControls() {
+        var groups = store.getGroups();
+        var items = (groups && groups.items) ? groups.items : groups;
+        if(items) {
+            Ext.each(items, function(g) { renderGroupControl(g.name || g); });
+        }
+    }
+
+    function renderGroupControl(groupName) {
+        var targetEl = Ext.get('header-' + groupName);
+        if (!targetEl || targetEl.down('.x-form-item')) return; // 이미 있으면 패스
+
+        // 1. 기존 정리
+        if (activeControls[groupName]) {
+            Ext.each(activeControls[groupName], function(c) { c.destroy(); });
+        }
+
+        // 2. 값 복원
+        var saved = groupData[groupName] || { status: '전체', memo: '' };
+
+        // 3. 생성
+        var combo = new Ext.form.field.ComboBox({
+            width: 80,
+            store: ['전체', '승인', '반려'],
+            value: saved.status,
+            editable: false,
+            listeners: {
+                change: function(c, v) { 
+                    if (!groupData[groupName]) groupData[groupName] = {};
+                    groupData[groupName].status = v;
+                }
+            }
+        });
+
+        var input = new Ext.form.field.Text({
+            width: 100,
+            emptyText: '메모',
+            value: saved.memo,
+            listeners: {
+                change: function(c, v) {
+                    if (!groupData[groupName]) groupData[groupName] = {};
+                    groupData[groupName].memo = v;
+                }
+            }
+        });
+
+        combo.render(targetEl);
+        input.render(targetEl);
+        activeControls[groupName] = [combo, input];
+    }
+});
+
