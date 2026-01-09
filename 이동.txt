@@ -154,3 +154,210 @@
 <body>
 </body>
 </html>
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ExtJS 4.2 Grouped Grid - Always Visible Controls</title>
+    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
+
+    <style>
+        /* 그룹 헤더가 접혀도 높이가 너무 줄어들지 않도록 최소 높이 보장 */
+        .x-grid-group-hd {
+            min-height: 25px; 
+            padding-top: 5px;
+            padding-bottom: 5px;
+        }
+        /* 컨트롤들이 헤더 텍스트와 잘 어울리도록 정렬 */
+        .group-header-wrapper {
+            position: relative;
+            z-index: 10; /* 클릭 시 다른 요소보다 위에 오도록 */
+        }
+    </style>
+
+    <script type="text/javascript">
+        Ext.onReady(function() {
+
+            // 그룹별 컴포넌트 관리 맵 (Key: 그룹명, Value: [컴포넌트1, 컴포넌트2])
+            var groupComponentMap = {};
+
+            var employeeStore = Ext.create('Ext.data.Store', {
+                fields: ['name', 'seniority', 'department'],
+                groupField: 'department',
+                data: {
+                    employees: [
+                        { name: '김철수', seniority: 7, department: '경영' },
+                        { name: '홍길동', seniority: 10, department: '경영' },
+                        { name: '이영희', seniority: 2, department: '영업' },
+                        { name: '박민수', seniority: 3, department: '영업' },
+                        { name: '최지연', seniority: 4, department: '회계' },
+                        { name: '정하나', seniority: 5, department: '회계' }
+                    ]
+                },
+                proxy: {
+                    type: 'memory',
+                    reader: { type: 'json', root: 'employees' }
+                }
+            });
+
+            Ext.create('Ext.grid.Panel', {
+                title: '직원 목록 (접어도 유지되는 헤더 컨트롤)',
+                store: employeeStore,
+                columns: [
+                    { text: '이름', dataIndex: 'name', flex: 1 },
+                    { text: '근속년수', dataIndex: 'seniority', width: 100 },
+                    { text: '부서', dataIndex: 'department', width: 120 }
+                ],
+                features: [{
+                    ftype: 'grouping',
+                    // 그룹 헤더 템플릿
+                    groupHeaderTpl: [
+                        '<div class="group-header-wrapper" style="display:flex; justify-content:space-between; align-items:center;">',
+                        '    <span class="group-title">{name} ({rows.length} 명)</span>',
+                        '    <div class="group-controls" style="display:flex; gap:8px; margin-right:10px;">',
+                        '        <div id="select-{name}" style="width:100px;"></div>',
+                        '        <div id="input-{name}" style="width:120px;"></div>',
+                        '    </div>',
+                        '</div>'
+                    ].join(''),
+                    startCollapsed: false
+                }],
+                height: 500,
+                width: 800,
+                renderTo: Ext.getBody(),
+                
+                viewConfig: {
+                    listeners: {
+                        // 1. 전체 리프레시 (초기 로딩, 정렬 등)
+                        refresh: function(view) {
+                            destroyAllControls(); // 전체 초기화
+                            Ext.defer(function() {
+                                createAllGroupControls();
+                            }, 50);
+                        },
+                        
+                        // 2. 그룹이 접힐 때 -> DOM이 바뀌므로 재생성 필요
+                        groupcollapse: function(view, node, groupName) {
+                            regenerateGroupControl(groupName);
+                        },
+
+                        // 3. 그룹이 펼쳐질 때 -> DOM이 바뀌므로 재생성 필요
+                        groupexpand: function(view, node, groupName) {
+                            regenerateGroupControl(groupName);
+                        }
+                    }
+                }
+            });
+
+            // 특정 그룹의 컨트롤을 지우고 다시 그리는 함수 (핵심 로직)
+            function regenerateGroupControl(groupName) {
+                // 기존 것 삭제 (메모리 누수 방지)
+                destroyControlsForGroup(groupName);
+
+                // DOM 업데이트 시간을 벌기 위해 살짝 지연 후 생성
+                Ext.defer(function() {
+                    createControlsForGroup(groupName);
+                }, 50);
+            }
+
+            // [메모리 관리] 모든 그룹의 컨트롤 삭제
+            function destroyAllControls() {
+                for (var groupName in groupComponentMap) {
+                    destroyControlsForGroup(groupName);
+                }
+            }
+
+            // [메모리 관리] 특정 그룹의 컨트롤만 삭제
+            function destroyControlsForGroup(groupName) {
+                var cmps = groupComponentMap[groupName];
+                if (cmps) {
+                    Ext.each(cmps, function(cmp) {
+                        if (cmp && !cmp.isDestroyed) {
+                            cmp.destroy();
+                        }
+                    });
+                    delete groupComponentMap[groupName]; // 맵에서 제거
+                }
+            }
+
+            // 모든 그룹에 대해 생성
+            function createAllGroupControls() {
+                var groups = employeeStore.getGroups();
+                var items = (groups && groups.items) ? groups.items : groups;
+                if (!items) return;
+
+                Ext.each(items, function(group) {
+                    var gName = group.name || group;
+                    createControlsForGroup(gName);
+                });
+            }
+
+            // 개별 그룹 컨트롤 생성
+            function createControlsForGroup(groupName) {
+                var encodedName = Ext.String.htmlEncode(groupName);
+                var selectEl = Ext.get('select-' + encodedName);
+                var inputEl = Ext.get('input-' + encodedName);
+
+                // 이미 해당 그룹에 컴포넌트가 등록되어 있으면 패스 (중복 생성 방지)
+                if (groupComponentMap[groupName]) return;
+
+                var newComponents = [];
+
+                if (selectEl) {
+                    // 중요: 이미 내용이 차있으면(다른 로직에 의해) 생성하지 않음
+                    if(selectEl.dom.innerHTML === "") {
+                        var combo = new Ext.form.field.ComboBox({
+                            renderTo: selectEl,
+                            width: 100,
+                            store: ['전체', '승인', '거부'],
+                            value: '전체',
+                            editable: false,
+                            listeners: {
+                                change: function(c, v) { console.log('['+groupName+'] 상태변경:', v); },
+                                // 클릭 이벤트 전파 방지 (그룹 접힘 방지)
+                                el: { click: function(e) { e.stopPropagation(); } }
+                            }
+                        });
+                        newComponents.push(combo);
+                    }
+                }
+
+                if (inputEl) {
+                    if(inputEl.dom.innerHTML === "") {
+                        var txt = new Ext.form.field.Text({
+                            renderTo: inputEl,
+                            width: 120,
+                            emptyText: '메모...',
+                            listeners: {
+                                change: function(c, v) { console.log('['+groupName+'] 메모입력:', v); },
+                                // 클릭/마우스다운 이벤트 전파 방지
+                                el: { 
+                                    click: function(e) { e.stopPropagation(); },
+                                    mousedown: function(e) { e.stopPropagation(); }
+                                }
+                            }
+                        });
+                        newComponents.push(txt);
+                    }
+                }
+
+                // 맵에 등록
+                if (newComponents.length > 0) {
+                    groupComponentMap[groupName] = newComponents;
+                }
+            }
+        });
+    </script>
+</head>
+<body>
+</body>
+</html>
+
