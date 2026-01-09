@@ -2,17 +2,18 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>ExtJS 4.2 Grouped Grid - Fixed</title>
-    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
-    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
+    <title>ExtJS 4.2 Grouped Grid with Controls in Header</title>
+
+    <link rel="stylesheet" type="text/css" 
+          href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
+    <script type="text/javascript" 
+            src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
 
     <script type="text/javascript">
         Ext.onReady(function() {
 
-            // 컴포넌트 관리를 위한 캐시 (메모리 누수 방지용)
-            var activeComponents = [];
-
             var employeeStore = Ext.create('Ext.data.Store', {
+                storeId: 'employeeStore',
                 fields: ['name', 'seniority', 'department'],
                 groupField: 'department',
                 data: {
@@ -32,7 +33,7 @@
             });
 
             Ext.create('Ext.grid.Panel', {
-                title: '직원 목록 (부서별 그룹화 + 헤더 컨트롤 완벽 수정)',
+                title: '직원 목록 (부서별 그룹화 + 헤더 컨트롤)',
                 store: employeeStore,
                 columns: [
                     { text: '이름', dataIndex: 'name', flex: 1 },
@@ -42,11 +43,11 @@
                 features: [{
                     ftype: 'grouping',
                     groupHeaderTpl: [
-                        '<div class="group-header-wrapper" style="display:flex; justify-content:space-between; align-items:center;">',
+                        '<div class="group-header-wrapper" style="display:flex; justify-content:space-between; align-items:center; width:100%;">',
                         '    <span class="group-title">{name} ({rows.length} 명)</span>',
-                        '    <div class="group-controls" style="display:flex; gap:8px; margin-right:10px;">',
-                        '        <div id="select-{name}" style="width:100px;"></div>', // width 지정 권장
-                        '        <div id="input-{name}" style="width:120px;"></div>',
+                        '    <div class="group-controls" style="display:flex; gap:8px;">',
+                        '        <div id="select-{name}"></div>',
+                        '        <div id="input-{name}"></div>',
                         '    </div>',
                         '</div>'
                     ].join(''),
@@ -55,97 +56,60 @@
                 height: 500,
                 width: 800,
                 renderTo: Ext.getBody(),
-                
                 viewConfig: {
                     listeners: {
-                        // 핵심 수정 1: refresh 이벤트에서 딜레이를 주어 DOM 생성을 기다림
+                        // 그룹이 확장될 때마다 컨트롤 생성/갱신
+                        groupexpand: function(view, node, group) {
+                            createControlsForGroup(group);
+                        },
+                        // 그리드 처음 렌더링 후 모든 그룹에 대해 한 번 실행
                         refresh: function(view) {
-                            // 기존에 생성된 컴포넌트들을 먼저 파괴해야 함 (중요!)
-                            destroyActiveComponents();
+                            if (this.controlsCreated) return;
+                            this.controlsCreated = true;
 
-                            // DOM 렌더링이 완료될 시간을 살짝 벌어줌 (50ms)
-                            Ext.defer(function() {
-                                createAllGroupControls();
-                            }, 50);
-                        },
-                        // 그룹 접기/펴기 시에도 컨트롤 재생성
-                        groupcollapse: function(view, node, groupName) {
-                            // 접힐 때는 컨트롤이 사라지므로 별도 처리 불필요하거나, 
-                            // 다시 펴질 때를 대비해야 함. 보통 refresh가 트리거될 수 있음.
-                        },
-                        groupexpand: function(view, node, groupName) {
-                            Ext.defer(function() {
-                                createControlsForGroup(groupName);
-                            }, 50);
+                            var groups = employeeStore.getGroups();
+                            // ExtJS 4.2에서는 groups.items 배열을 순회
+                            Ext.each(groups.items, function(group) {
+                                createControlsForGroup(group.name);
+                            });
                         }
                     }
                 }
             });
 
-            function destroyActiveComponents() {
-                Ext.each(activeComponents, function(cmp) {
-                    if (cmp && !cmp.isDestroyed) {
-                        cmp.destroy();
-                    }
-                });
-                activeComponents = [];
-            }
-
-            function createAllGroupControls() {
-                var groups = employeeStore.getGroups();
-                // ExtJS 버전에 따라 groups 구조가 다를 수 있음 (4.2.1 기준 체크)
-                var items = (groups && groups.items) ? groups.items : groups;
-                
-                if (!items) return;
-
-                Ext.each(items, function(group) {
-                    // group 객체 구조가 {name: '...', children: [...]} 형태인지 확인
-                    var gName = group.name || group; 
-                    createControlsForGroup(gName);
-                });
-            }
-
+            // 그룹별 컨트롤 생성 함수 (중복 방지 포함)
             function createControlsForGroup(groupName) {
-                var encodedName = Ext.String.htmlEncode(groupName);
-                
-                // Ext.get이 실패하지 않도록 체크
-                var selectEl = Ext.get('select-' + encodedName);
-                var inputEl = Ext.get('input-' + encodedName);
+                var selectEl = Ext.get('select-' + groupName);
+                var inputEl = Ext.get('input-' + groupName);
 
-                // 이미 렌더링된 요소에 중복 생성 방지
-                if (selectEl && selectEl.dom.innerHTML === "") {
-                    var combo = new Ext.form.field.ComboBox({
+                if (selectEl && !selectEl.hasCls('control-created')) {
+                    new Ext.form.field.ComboBox({
                         renderTo: selectEl,
                         width: 100,
                         store: ['전체', '승인', '거부'],
                         value: '전체',
                         editable: false,
                         listeners: {
-                            change: function(c, v) { console.log(groupName, 'Combo:', v); },
-                            // 중요: 콤보박스 클릭 시 그룹 접힘 방지
-                            el: {
-                                click: function(e) { e.stopPropagation(); }
+                            change: function(combo, newValue) {
+                                console.log('그룹 [' + groupName + '] 선택:', newValue);
                             }
                         }
                     });
-                    activeComponents.push(combo);
+                    selectEl.addCls('control-created');
                 }
 
-                if (inputEl && inputEl.dom.innerHTML === "") {
-                    var txt = new Ext.form.field.Text({
+                if (inputEl && !inputEl.hasCls('control-created')) {
+                    new Ext.form.field.Text({
                         renderTo: inputEl,
                         width: 120,
-                        emptyText: '메모...',
+                        emptyText: '메모 입력...',
                         listeners: {
-                            change: function(c, v) { console.log(groupName, 'Input:', v); },
-                            // 중요: 인풋 클릭/포커스 시 그룹 접힘 방지
-                            el: {
-                                click: function(e) { e.stopPropagation(); },
-                                mousedown: function(e) { e.stopPropagation(); }
+                            change: function(field, newValue) {
+                                console.log('그룹 [' + groupName + '] 입력:', newValue);
                             }
                         }
                     });
-                    activeComponents.push(txt);
+                    inputEl.addCls('control-created');
                 }
             }
         });
@@ -154,490 +118,3 @@
 <body>
 </body>
 </html>
-
-
-
-
-
-
-
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>ExtJS 4.2 Grouped Grid - Always Visible Controls</title>
-    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
-    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
-
-    <style>
-        /* 그룹 헤더가 접혀도 높이가 너무 줄어들지 않도록 최소 높이 보장 */
-        .x-grid-group-hd {
-            min-height: 25px; 
-            padding-top: 5px;
-            padding-bottom: 5px;
-        }
-        /* 컨트롤들이 헤더 텍스트와 잘 어울리도록 정렬 */
-        .group-header-wrapper {
-            position: relative;
-            z-index: 10; /* 클릭 시 다른 요소보다 위에 오도록 */
-        }
-    </style>
-
-    <script type="text/javascript">
-        Ext.onReady(function() {
-
-            // 그룹별 컴포넌트 관리 맵 (Key: 그룹명, Value: [컴포넌트1, 컴포넌트2])
-            var groupComponentMap = {};
-
-            var employeeStore = Ext.create('Ext.data.Store', {
-                fields: ['name', 'seniority', 'department'],
-                groupField: 'department',
-                data: {
-                    employees: [
-                        { name: '김철수', seniority: 7, department: '경영' },
-                        { name: '홍길동', seniority: 10, department: '경영' },
-                        { name: '이영희', seniority: 2, department: '영업' },
-                        { name: '박민수', seniority: 3, department: '영업' },
-                        { name: '최지연', seniority: 4, department: '회계' },
-                        { name: '정하나', seniority: 5, department: '회계' }
-                    ]
-                },
-                proxy: {
-                    type: 'memory',
-                    reader: { type: 'json', root: 'employees' }
-                }
-            });
-
-            Ext.create('Ext.grid.Panel', {
-                title: '직원 목록 (접어도 유지되는 헤더 컨트롤)',
-                store: employeeStore,
-                columns: [
-                    { text: '이름', dataIndex: 'name', flex: 1 },
-                    { text: '근속년수', dataIndex: 'seniority', width: 100 },
-                    { text: '부서', dataIndex: 'department', width: 120 }
-                ],
-                features: [{
-                    ftype: 'grouping',
-                    // 그룹 헤더 템플릿
-                    groupHeaderTpl: [
-                        '<div class="group-header-wrapper" style="display:flex; justify-content:space-between; align-items:center;">',
-                        '    <span class="group-title">{name} ({rows.length} 명)</span>',
-                        '    <div class="group-controls" style="display:flex; gap:8px; margin-right:10px;">',
-                        '        <div id="select-{name}" style="width:100px;"></div>',
-                        '        <div id="input-{name}" style="width:120px;"></div>',
-                        '    </div>',
-                        '</div>'
-                    ].join(''),
-                    startCollapsed: false
-                }],
-                height: 500,
-                width: 800,
-                renderTo: Ext.getBody(),
-                
-                viewConfig: {
-                    listeners: {
-                        // 1. 전체 리프레시 (초기 로딩, 정렬 등)
-                        refresh: function(view) {
-                            destroyAllControls(); // 전체 초기화
-                            Ext.defer(function() {
-                                createAllGroupControls();
-                            }, 50);
-                        },
-                        
-                        // 2. 그룹이 접힐 때 -> DOM이 바뀌므로 재생성 필요
-                        groupcollapse: function(view, node, groupName) {
-                            regenerateGroupControl(groupName);
-                        },
-
-                        // 3. 그룹이 펼쳐질 때 -> DOM이 바뀌므로 재생성 필요
-                        groupexpand: function(view, node, groupName) {
-                            regenerateGroupControl(groupName);
-                        }
-                    }
-                }
-            });
-
-            // 특정 그룹의 컨트롤을 지우고 다시 그리는 함수 (핵심 로직)
-            function regenerateGroupControl(groupName) {
-                // 기존 것 삭제 (메모리 누수 방지)
-                destroyControlsForGroup(groupName);
-
-                // DOM 업데이트 시간을 벌기 위해 살짝 지연 후 생성
-                Ext.defer(function() {
-                    createControlsForGroup(groupName);
-                }, 50);
-            }
-
-            // [메모리 관리] 모든 그룹의 컨트롤 삭제
-            function destroyAllControls() {
-                for (var groupName in groupComponentMap) {
-                    destroyControlsForGroup(groupName);
-                }
-            }
-
-            // [메모리 관리] 특정 그룹의 컨트롤만 삭제
-            function destroyControlsForGroup(groupName) {
-                var cmps = groupComponentMap[groupName];
-                if (cmps) {
-                    Ext.each(cmps, function(cmp) {
-                        if (cmp && !cmp.isDestroyed) {
-                            cmp.destroy();
-                        }
-                    });
-                    delete groupComponentMap[groupName]; // 맵에서 제거
-                }
-            }
-
-            // 모든 그룹에 대해 생성
-            function createAllGroupControls() {
-                var groups = employeeStore.getGroups();
-                var items = (groups && groups.items) ? groups.items : groups;
-                if (!items) return;
-
-                Ext.each(items, function(group) {
-                    var gName = group.name || group;
-                    createControlsForGroup(gName);
-                });
-            }
-
-            // 개별 그룹 컨트롤 생성
-            function createControlsForGroup(groupName) {
-                var encodedName = Ext.String.htmlEncode(groupName);
-                var selectEl = Ext.get('select-' + encodedName);
-                var inputEl = Ext.get('input-' + encodedName);
-
-                // 이미 해당 그룹에 컴포넌트가 등록되어 있으면 패스 (중복 생성 방지)
-                if (groupComponentMap[groupName]) return;
-
-                var newComponents = [];
-
-                if (selectEl) {
-                    // 중요: 이미 내용이 차있으면(다른 로직에 의해) 생성하지 않음
-                    if(selectEl.dom.innerHTML === "") {
-                        var combo = new Ext.form.field.ComboBox({
-                            renderTo: selectEl,
-                            width: 100,
-                            store: ['전체', '승인', '거부'],
-                            value: '전체',
-                            editable: false,
-                            listeners: {
-                                change: function(c, v) { console.log('['+groupName+'] 상태변경:', v); },
-                                // 클릭 이벤트 전파 방지 (그룹 접힘 방지)
-                                el: { click: function(e) { e.stopPropagation(); } }
-                            }
-                        });
-                        newComponents.push(combo);
-                    }
-                }
-
-                if (inputEl) {
-                    if(inputEl.dom.innerHTML === "") {
-                        var txt = new Ext.form.field.Text({
-                            renderTo: inputEl,
-                            width: 120,
-                            emptyText: '메모...',
-                            listeners: {
-                                change: function(c, v) { console.log('['+groupName+'] 메모입력:', v); },
-                                // 클릭/마우스다운 이벤트 전파 방지
-                                el: { 
-                                    click: function(e) { e.stopPropagation(); },
-                                    mousedown: function(e) { e.stopPropagation(); }
-                                }
-                            }
-                        });
-                        newComponents.push(txt);
-                    }
-                }
-
-                // 맵에 등록
-                if (newComponents.length > 0) {
-                    groupComponentMap[groupName] = newComponents;
-                }
-            }
-        });
-    </script>
-</head>
-<body>
-</body>
-</html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>ExtJS 4.2 Optimized Group Grid</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
-
-    <script type="text/javascript">
-        Ext.onReady(function() {
-            
-            // [핵심 1] 데이터 저장소 (그룹이 다시 그려져도 값 유지용)
-            // 구조: { '영업팀': { status: '승인', memo: '확인필요' }, ... }
-            var groupData = {}; 
-
-            // [핵심 2] 컴포넌트 관리소 (메모리 누수 방지용 cleanup)
-            var activeControls = {}; 
-
-            // 스토어 설정
-            var store = Ext.create('Ext.data.Store', {
-                fields: ['name', 'dept'],
-                groupField: 'dept',
-                data: [
-                    { name: '김철수', dept: '개발팀' }, { name: '이영희', dept: '개발팀' },
-                    { name: '박민수', dept: '인사팀' }, { name: '최지우', dept: '인사팀' },
-                    { name: '정하나', dept: '영업팀' }, { name: '강동원', dept: '영업팀' }
-                ]
-            });
-
-            // 그리드 생성
-            Ext.create('Ext.grid.Panel', {
-                renderTo: Ext.getBody(),
-                width: 600,
-                height: 400,
-                store: store,
-                title: '데이터 유지 + 최적화 그룹 그리드',
-                columns: [
-                    { text: '이름', dataIndex: 'name', flex: 1 },
-                    { text: '부서', dataIndex: 'dept', width: 100 }
-                ],
-                features: [{
-                    ftype: 'grouping',
-                    startCollapsed: false,
-                    // 헤더 템플릿: ID 생성 규칙 통일 (header-그룹명)
-                    groupHeaderTpl: [
-                        '<div style="display:flex; justify-content:space-between;">',
-                        '   <span>{name} ({rows.length})</span>',
-                        '   <div id="header-{name}" style="display:flex; gap:5px; margin-right:10px;"></div>',
-                        '</div>'
-                    ].join('')
-                }],
-                viewConfig: {
-                    listeners: {
-                        // 뷰가 갱신되거나 그룹이 토글될 때 컨트롤 렌더링 트리거
-                        refresh: function() { 
-                            Ext.defer(renderAllControls, 50); 
-                        },
-                        groupcollapse: function(v, n, groupName) { 
-                            Ext.defer(function(){ renderGroupControl(groupName); }, 50); 
-                        },
-                        groupexpand: function(v, n, groupName) { 
-                            Ext.defer(function(){ renderGroupControl(groupName); }, 50); 
-                        }
-                    }
-                }
-            });
-
-            // --- [로직 함수] ---
-
-            // 모든 그룹 컨트롤 렌더링
-            function renderAllControls() {
-                var groups = store.getGroups();
-                var items = (groups && groups.items) ? groups.items : groups; // ExtJS 버전 호환
-                if(items) {
-                    Ext.each(items, function(g) { renderGroupControl(g.name || g); });
-                }
-            }
-
-            // 개별 그룹 컨트롤 렌더링 (Cleanup -> Create -> Restore Value)
-            function renderGroupControl(groupName) {
-                var targetId = 'header-' + groupName;
-                var targetEl = Ext.get(targetId);
-                
-                // 1. DOM이 없거나 이미 렌더링 됐으면 스킵
-                if (!targetEl || targetEl.down('.x-form-item')) return;
-
-                // 2. 기존 컴포넌트 메모리 해제 (Cleanup)
-                if (activeControls[groupName]) {
-                    Ext.each(activeControls[groupName], function(c) { c.destroy(); });
-                }
-                activeControls[groupName] = [];
-
-                // 3. 저장된 값 불러오기 (없으면 기본값)
-                var saved = groupData[groupName] || { status: '전체', memo: '' };
-
-                // 4. 컴포넌트 생성
-                var combo = new Ext.form.field.ComboBox({
-                    width: 80,
-                    store: ['전체', '승인', '반려'],
-                    value: saved.status, // 값 복원
-                    editable: false,
-                    listeners: {
-                        change: function(c, v) { 
-                            updateData(groupName, 'status', v); // 값 변경시 저장
-                        },
-                        el: { click: stopProp } // 클릭시 그룹 접힘 방지
-                    }
-                });
-
-                var input = new Ext.form.field.Text({
-                    width: 100,
-                    emptyText: '메모',
-                    value: saved.memo, // 값 복원
-                    listeners: {
-                        change: function(c, v) { 
-                            updateData(groupName, 'memo', v); // 값 변경시 저장
-                        },
-                        el: { click: stopProp, mousedown: stopProp }
-                    }
-                });
-
-                // 5. 렌더링 및 관리 등록
-                combo.render(targetEl);
-                input.render(targetEl);
-                activeControls[groupName] = [combo, input];
-            }
-
-            // 데이터 업데이트 헬퍼
-            function updateData(group, key, val) {
-                if (!groupData[group]) groupData[group] = {};
-                groupData[group][key] = val;
-                console.log('Saved:', groupData);
-            }
-
-            // 이벤트 전파 방지 헬퍼
-            function stopProp(e) { e.stopPropagation(); }
-        });
-    </script>
-</head>
-<body></body>
-</html>
-
-
-
-
-
-
-
-
-Ext.onReady(function() {
-    
-    // 1. 데이터 저장소 (입력값 유지용)
-    var groupData = {}; 
-
-    // 2. 컴포넌트 관리 (메모리 누수 방지)
-    var activeControls = {}; 
-
-    var store = Ext.create('Ext.data.Store', {
-        fields: ['name', 'dept'],
-        groupField: 'dept',
-        data: [
-            { name: '김철수', dept: '개발팀' }, { name: '이영희', dept: '개발팀' },
-            { name: '박민수', dept: '인사팀' }, { name: '최지우', dept: '인사팀' },
-            { name: '정하나', dept: '영업팀' }, { name: '강동원', dept: '영업팀' }
-        ]
-    });
-
-    Ext.create('Ext.grid.Panel', {
-        renderTo: Ext.getBody(),
-        width: 600,
-        height: 400,
-        store: store,
-        title: '접기/펼치기 비활성화 그룹 그리드',
-        
-        columns: [
-            { text: '이름', dataIndex: 'name', flex: 1 },
-            { text: '부서', dataIndex: 'dept', width: 100 }
-        ],
-
-        features: [{
-            ftype: 'grouping',
-            startCollapsed: false,   // 처음부터 펼쳐둠
-            enableGroupingMenu: false, // 메뉴에서 그룹핑 제어 끔
-            
-            // [핵심 1] 헤더 클릭 시 접히는 동작 자체를 차단
-            collapsible: false, 
-
-            // 헤더 템플릿
-            groupHeaderTpl: [
-                '<div style="display:flex; justify-content:space-between; align-items:center;">',
-                '   <span style="cursor:default;">{name} ({rows.length})</span>', // 커서 모양 변경
-                '   <div id="header-{name}" style="display:flex; gap:5px; margin-right:10px;"></div>',
-                '</div>'
-            ].join(''),
-
-            // [핵심 2] 그룹 헤더 클릭 이벤트 리스너 오버라이드 (완벽 차단)
-            listeners: {
-                groupclick: function(view, node, group, e, eOpts) {
-                    return false; // 클릭 이벤트 무시
-                }
-            }
-        }],
-
-        viewConfig: {
-            listeners: {
-                // 화면 갱신될 때만 컨트롤 다시 그리기
-                refresh: function() { 
-                    Ext.defer(renderAllControls, 50); 
-                }
-            }
-        }
-    });
-
-    // --- 렌더링 로직 (이전과 동일하지만 훨씬 안정적) ---
-
-    function renderAllControls() {
-        var groups = store.getGroups();
-        var items = (groups && groups.items) ? groups.items : groups;
-        if(items) {
-            Ext.each(items, function(g) { renderGroupControl(g.name || g); });
-        }
-    }
-
-    function renderGroupControl(groupName) {
-        var targetEl = Ext.get('header-' + groupName);
-        if (!targetEl || targetEl.down('.x-form-item')) return; // 이미 있으면 패스
-
-        // 1. 기존 정리
-        if (activeControls[groupName]) {
-            Ext.each(activeControls[groupName], function(c) { c.destroy(); });
-        }
-
-        // 2. 값 복원
-        var saved = groupData[groupName] || { status: '전체', memo: '' };
-
-        // 3. 생성
-        var combo = new Ext.form.field.ComboBox({
-            width: 80,
-            store: ['전체', '승인', '반려'],
-            value: saved.status,
-            editable: false,
-            listeners: {
-                change: function(c, v) { 
-                    if (!groupData[groupName]) groupData[groupName] = {};
-                    groupData[groupName].status = v;
-                }
-            }
-        });
-
-        var input = new Ext.form.field.Text({
-            width: 100,
-            emptyText: '메모',
-            value: saved.memo,
-            listeners: {
-                change: function(c, v) {
-                    if (!groupData[groupName]) groupData[groupName] = {};
-                    groupData[groupName].memo = v;
-                }
-            }
-        });
-
-        combo.render(targetEl);
-        input.render(targetEl);
-        activeControls[groupName] = [combo, input];
-    }
-});
-
