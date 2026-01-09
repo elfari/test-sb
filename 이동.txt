@@ -1,63 +1,84 @@
-CREATE OR REPLACE PROCEDURE P_MRO_SIMILAR_CHECK_MAIN (
-    P_REQ_NO    IN  VARCHAR2,       -- 요청 번호
-    P_MODE      IN  VARCHAR2,       -- 'INIT': 초기/전체검색, 'INC': 증분검색
-    O_FOUND_CNT OUT NUMBER          -- (출력) 이번 실행에서 찾아낸 유사자재 건수
-) IS
-    V_REQ_ITEM_NAME   MRO_INFO.ITEM_NAME_EN%TYPE;
-    V_LAST_CHECK_DT   DATE;
-    V_SEARCH_START_DT DATE;
+CREATE OR REPLACE PROCEDURE P_MRO_SIM_CHECK IS
+
+    /* 변수 선언부: 루프 내에서 사용할 변수나 카운터 등이 있다면 선언 */
+    v_process_cnt NUMBER := 0;
+
 BEGIN
-    O_FOUND_CNT := 0;
-
-    -- 1. 요청 자재 정보 및 마지막 체크 시간 조회
-    BEGIN
-        SELECT ITEM_NAME_EN, SIMILAR_CHECK_DTIME
-          INTO V_REQ_ITEM_NAME, V_LAST_CHECK_DT
+    /* 1. 대상 조회 루프 (STATUS='C' 이고 WORKING 컬럼이 비어있는 건) */
+    FOR r IN (
+        SELECT REQ_NO, 
+               MATERIAL_NAME, 
+               CATEGORY_ID -- 성능 최적화를 위해 카테고리 정보도 함께 조회 권장
           FROM MRO_INFO
-         WHERE REQ_NO = P_REQ_NO;
-    EXCEPTION
-        WHEN NO_DATA_FOUND THEN
-            RETURN; -- 대상 데이터 없으면 종료
-    END;
+         WHERE STATUS = 'C'
+           AND WORKING IS NULL
+    ) 
+    LOOP
+        BEGIN
+            /* 2-1. 기존 분석 데이터 삭제 (재작업 시 중복 방지) */
+            DELETE FROM MRO_INFO_SIMILAR 
+             WHERE REQ_NO = r.REQ_NO;
 
-    -- 2. 검색 모드에 따른 시작 시간(Start Date) 설정
-    IF P_MODE = 'INIT' OR V_LAST_CHECK_DT IS NULL THEN
-        -- 초기 모드이거나, 한 번도 체크한 적이 없으면 '아주 과거'부터 전체 검색
-        V_SEARCH_START_DT := TO_DATE('19000101', 'YYYYMMDD');
-    ELSE
-        -- 증분 모드('INC')라면 '마지막 체크 시간' 이후 데이터만 검색
-        V_SEARCH_START_DT := V_LAST_CHECK_DT;
-    END IF;
+            /* 2-2. 유사도 함수 호출 및 결과 저장 (INSERT) */
+            INSERT INTO MRO_INFO_SIMILAR (
+                REQ_NO,
+                SIMILAR_MASTID,
+                SIMILARITY_PCT,
+                RANK,
+                CREATED_DATE -- 생성일자 (테이블에 컬럼이 있다면)
+            )
+            SELECT r.REQ_NO,
+                   MAT_ID,
+                   SIM_SCORE,
+                   RNK,
+                   SYSDATE
+              FROM (
+                    SELECT MAT_ID,
+                           SIM_SCORE,
+                           ROW_NUMBER() OVER(ORDER BY SIM_SCORE DESC) AS RNK
+                      FROM (
+                            SELECT MAT_ID,
+                                   /* 함수 호출: 기존 자재명 vs 요청 자재명 */
+                                   FN_SIMILARITY_PCT(MATERIAL_NAME, r.MATERIAL_NAME) AS SIM_SCORE
+                              FROM MASTOUT
+                             WHERE 1=1
+                               /* [성능 핵심] 전체 100만 건 비교는 느리므로 반드시 필터링 권장 
+                                  예: 같은 카테고리 내에서만 비교 */
+                               -- AND CATEGORY_ID = r.CATEGORY_ID 
+                           )
+                     WHERE SIM_SCORE >= 90  -- 유사도 90% 이상인 것만
+                   )
+             WHERE RNK <= 10; -- 상위 10건만 저장
 
-    -- 3. 유사 자재 검색 및 저장 (핵심 로직)
-    INSERT INTO MRO_INFO_SIMILAR (
-        REQ_NO, SIMILAR_MASTID, SIMILAR_PCT, CREATED_DATE
-    )
-    SELECT P_REQ_NO,
-           M.MASTID,
-           FN_SIMILAR_PCT(V_REQ_ITEM_NAME, M.ITEM_NAME_EN),
-           SYSDATE
-      FROM MASTOUT M
-     WHERE M.CREATIONDTIME > V_SEARCH_START_DT  -- 설정된 시간 이후 생성된 것만
-       -- [성능 최적화] 전체 스캔 방지용 1차 필터 (예: 앞 2글자 일치)
-       AND M.ITEM_NAME_EN LIKE SUBSTR(V_REQ_ITEM_NAME, 1, 2) || '%' 
-       -- [정밀 비교] 함수 실행
-       AND FN_SIMILAR_PCT(V_REQ_ITEM_NAME, M.ITEM_NAME_EN) >= 90;
+            /* 3. 작업 완료 처리 (중요) */
+            /* WORKING 컬럼을 'Y'(완료)로 업데이트하여 다음 실행 시 제외되도록 함 */
+            UPDATE MRO_INFO
+               SET WORKING = 'Y'
+             WHERE REQ_NO = r.REQ_NO;
+            
+            /* 건별 커밋 (대량 데이터 처리 시 부하 분산) */
+            COMMIT;
+            
+            v_process_cnt := v_process_cnt + 1;
 
-    -- 4. 처리 결과 저장
-    O_FOUND_CNT := SQL%ROWCOUNT; -- INSERT된 건수 저장
+        EXCEPTION
+            WHEN OTHERS THEN
+                /* 특정 건에서 에러가 나더라도 루프를 멈추지 않고 다음 건으로 진행 */
+                ROLLBACK; -- 해당 건의 작업만 취소
+                
+                /* 에러 발생 표시 (WORKING 컬럼을 'E'(Error) 등으로 처리) */
+                UPDATE MRO_INFO
+                   SET WORKING = 'E' 
+                 WHERE REQ_NO = r.REQ_NO;
+                 
+                COMMIT;
+                DBMS_OUTPUT.PUT_LINE('Error on REQ_NO ' || r.REQ_NO || ': ' || SQLERRM);
+        END;
+        
+    END LOOP;
 
-    -- 5. 마지막 체크 시간 업데이트
-    UPDATE MRO_INFO
-       SET SIMILAR_CHECK_DTIME = SYSDATE
-     WHERE REQ_NO = P_REQ_NO;
-    
-    -- 주의: COMMIT은 호출하는 쪽(Batch Loop 또는 Java Service)에서 제어하는 것이 좋습니다.
-    -- 필요하다면 여기에 COMMIT; 추가
+    DBMS_OUTPUT.PUT_LINE('Total Processed: ' || v_process_cnt);
 
-EXCEPTION
-    WHEN OTHERS THEN
-        ROLLBACK;
-        RAISE; -- 에러를 호출한 쪽에 알림
-END P_MRO_SIMILAR_CHECK_MAIN;
+END P_MRO_SIM_CHECK;
 /
+
