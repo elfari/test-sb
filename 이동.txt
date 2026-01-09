@@ -1,106 +1,63 @@
-Ext.onReady(function() {
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ExtJS 4.2 Grouped Grid Sample</title>
 
-    // 1. 모델 및 스토어 (Kitchen Sink 예제 데이터 구조 참고)
-    Ext.define('Cuisine', {
-        extend: 'Ext.data.Model',
-        fields: ['name', 'cuisine']
-    });
+    <!-- ExtJS 4.2 CSS -->
+    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
 
-    var store = Ext.create('Ext.data.Store', {
-        model: 'Cuisine',
-        groupField: 'cuisine', // 그룹핑 기준 필드
-        sorters: ['name'],
-        data: [
-            { name: 'Cheesecake Factory', cuisine: 'American' },
-            { name: 'Creamery', cuisine: 'American' },
-            { name: 'University Cafe', cuisine: 'American' },
-            { name: 'Nagasaki', cuisine: 'Japanese' },
-            { name: 'Sushi Zen', cuisine: 'Japanese' },
-            { name: 'Paris Baguette', cuisine: 'Bakery' },
-            { name: 'Tous Les Jours', cuisine: 'Bakery' }
-        ]
-    });
+    <!-- ExtJS 4.2 Core -->
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
 
-    // 2. 그리드 생성
-    Ext.create('Ext.grid.Panel', {
-        renderTo: Ext.getBody(),
-        width: 800,
-        height: 450,
-        frame: true,
-        title: 'Restaurants (Grouped Header Inputs)',
-        store: store,
-        iconCls: 'icon-grid',
-        
-        columns: [{
-            text: 'Name',
-            flex: 1,
-            dataIndex: 'name'
-        }, {
-            text: 'Cuisine',
-            flex: 1,
-            dataIndex: 'cuisine'
-        }],
+    <script type="text/javascript">
+        Ext.onReady(function() {
 
-        // 3. 핵심: 그룹핑 기능 설정
-        features: [{
-            ftype: 'grouping',
-            startCollapsed: false,
-            
-            // [중요] 그룹 헤더 템플릿
-            // HTML 태그를 사용하여 우측(float:right)에 입력 필드를 배치합니다.
-            // data-group 값으로 현재 어떤 그룹인지 식별합니다.
-            groupHeaderTpl: [
-                '{name} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
-                '<div style="float:right; margin-right:10px; font-weight:normal; font-size:12px;">',
-                    '사유: ',
-                    '<select class="header-input reason-select" data-group="{name}" style="color:black;">',
-                        '<option value="">선택</option>',
-                        '<option value="soldout">재료소진</option>',
-                        '<option value="closed">휴무</option>',
-                    '</select>',
-                    '&nbsp;&nbsp;상세사유: ',
-                    '<input type="text" class="header-input reason-detail" data-group="{name}" style="color:black; width:120px;"/>',
-                    '&nbsp;<button class="header-btn-save" data-group="{name}">저장</button>',
-                '</div>'
-            ]
-        }],
-
-        // 4. 핵심: 이벤트 처리 (입력창 클릭 시 그룹 접힘 방지)
-        viewConfig: {
-            listeners: {
-                afterrender: function(view) {
-                    // 뷰의 엘리먼트에 이벤트를 위임(delegation)하여 처리
-                    var viewEl = view.getEl();
-
-                    // (1) 입력 필드 클릭/포커스 시 그룹 토글(접기) 방지
-                    // mousedown과 click 모두 막아야 안전합니다.
-                    var stopPropagationFn = function(e) {
-                        e.stopPropagation();
-                    };
-
-                    // select, input, button 태그에 대해 이벤트 전파 차단
-                    viewEl.on('mousedown', stopPropagationFn, null, { delegate: '.header-input, .header-btn-save' });
-                    viewEl.on('click', stopPropagationFn, null, { delegate: '.header-input, .header-btn-save' });
-                    viewEl.on('dblclick', stopPropagationFn, null, { delegate: '.header-input, .header-btn-save' });
-
-                    // (2) 저장 버튼 클릭 등 로직 처리
-                    viewEl.on('click', function(e, t) {
-                        var target = e.getTarget();
-                        var groupName = target.getAttribute('data-group');
-                        
-                        // 현재 클릭된 버튼이 속한 부모 div 찾기
-                        var parentDiv = Ext.get(target).up('div');
-                        
-                        // 부모 div 아래의 select와 input 값 찾기
-                        var reasonVal = parentDiv.down('.reason-select').getValue();
-                        var detailVal = parentDiv.down('.reason-detail').getValue();
-
-                        console.log('Group:', groupName, 'Reason:', reasonVal, 'Detail:', detailVal);
-                        alert('저장됨:\n그룹: ' + groupName + '\n사유: ' + reasonVal + '\n상세: ' + detailVal);
-                        
-                    }, null, { delegate: '.header-btn-save' });
+            // 데이터 스토어 정의 (groupField로 그룹화 지정)
+            var employeeStore = Ext.create('Ext.data.Store', {
+                storeId: 'employeeStore',
+                fields: ['name', 'seniority', 'department'],
+                groupField: 'department',  // 이 필드로 그룹화
+                data: {
+                    employees: [
+                        { name: '김철수', seniority: 7, department: '경영' },
+                        { name: '이영희', seniority: 2, department: '영업' },
+                        { name: '박민수', seniority: 3, department: '영업' },
+                        { name: '최지연', seniority: 4, department: '회계' },
+                        { name: '정하나', seniority: 5, department: '회계' },
+                        { name: '홍길동', seniority: 10, department: '경영' }
+                    ]
+                },
+                proxy: {
+                    type: 'memory',
+                    reader: {
+                        type: 'json',
+                        root: 'employees'
+                    }
                 }
-            }
-        }
-    });
-});
+            });
+
+            // 그룹화된 그리드 패널
+            Ext.create('Ext.grid.Panel', {
+                title: '직원 목록 (부서별 그룹화)',
+                store: employeeStore,
+                columns: [
+                    { text: '이름', dataIndex: 'name', flex: 1 },
+                    { text: '근속년수', dataIndex: 'seniority', width: 100 },
+                    { text: '부서', dataIndex: 'department', width: 120 }
+                ],
+                features: [{
+                    ftype: 'grouping',
+                    groupHeaderTpl: '{name} ({rows.length} 명)',  // 그룹 헤더 템플릿 (그룹명 + 건수)
+                    startCollapsed: false   // 처음에 그룹 펼쳐진 상태 (true로 하면 접힌 상태)
+                }],
+                height: 400,
+                width: 600,
+                renderTo: Ext.getBody()
+            });
+        });
+    </script>
+</head>
+<body>
+</body>
+</html>
