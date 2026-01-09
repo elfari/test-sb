@@ -1,97 +1,104 @@
 Ext.onReady(function() {
 
-    // 1. 데이터 모델 및 스토어
-    Ext.define('Employee', {
+    // 1. 모델 및 스토어 (Kitchen Sink 예제 데이터 구조 참고)
+    Ext.define('Cuisine', {
         extend: 'Ext.data.Model',
-        fields: ['name', 'department', 'position', 'salary']
+        fields: ['name', 'cuisine']
     });
 
-    var employeeStore = Ext.create('Ext.data.Store', {
-        model: 'Employee',
-        groupField: 'department',
+    var store = Ext.create('Ext.data.Store', {
+        model: 'Cuisine',
+        groupField: 'cuisine', // 그룹핑 기준 필드
+        sorters: ['name'],
         data: [
-            { name: '김철수', department: '개발팀', position: '대리', salary: 5000 },
-            { name: '이영희', department: '개발팀', position: '사원', salary: 3500 },
-            { name: '박민수', department: '인사팀', position: '과장', salary: 6000 },
-            { name: '최지우', department: '인사팀', position: '대리', salary: 4800 },
-            { name: '강동원', department: '영업팀', position: '부장', salary: 7500 }
+            { name: 'Cheesecake Factory', cuisine: 'American' },
+            { name: 'Creamery', cuisine: 'American' },
+            { name: 'University Cafe', cuisine: 'American' },
+            { name: 'Nagasaki', cuisine: 'Japanese' },
+            { name: 'Sushi Zen', cuisine: 'Japanese' },
+            { name: 'Paris Baguette', cuisine: 'Bakery' },
+            { name: 'Tous Les Jours', cuisine: 'Bakery' }
         ]
     });
 
     // 2. 그리드 생성
     Ext.create('Ext.grid.Panel', {
-        title: '그룹 헤더에 입력 필드 추가 예제',
-        store: employeeStore,
-        width: 700,
-        height: 400,
         renderTo: Ext.getBody(),
-        columns: [
-            { text: '이름', dataIndex: 'name', flex: 1 },
-            { text: '직급', dataIndex: 'position', width: 100 },
-            { text: '연봉', dataIndex: 'salary', width: 100, renderer: Ext.util.Format.numberRenderer('0,000') }
-        ],
+        width: 800,
+        height: 450,
+        frame: true,
+        title: 'Restaurants (Grouped Header Inputs)',
+        store: store,
+        iconCls: 'icon-grid',
+        
+        columns: [{
+            text: 'Name',
+            flex: 1,
+            dataIndex: 'name'
+        }, {
+            text: 'Cuisine',
+            flex: 1,
+            dataIndex: 'cuisine'
+        }],
 
+        // 3. 핵심: 그룹핑 기능 설정
         features: [{
             ftype: 'grouping',
-            hideGroupedHeader: true,
             startCollapsed: false,
             
-            // 핵심 1: HTML 태그로 우측(float:right)에 입력 필드 배치
-            // data-groupname 속성에 현재 그룹명({name})을 넣어 나중에 식별합니다.
+            // [중요] 그룹 헤더 템플릿
+            // HTML 태그를 사용하여 우측(float:right)에 입력 필드를 배치합니다.
+            // data-group 값으로 현재 어떤 그룹인지 식별합니다.
             groupHeaderTpl: [
-                '{name} ({rows.length}명)',
-                '<div style="float:right; margin-right:10px; font-weight:normal;">',
+                '{name} ({rows.length} Item{[values.rows.length > 1 ? "s" : ""]})',
+                '<div style="float:right; margin-right:10px; font-weight:normal; font-size:12px;">',
                     '사유: ',
-                    '<select class="grp-reason-select" data-groupname="{name}" style="margin-right:5px;">',
+                    '<select class="header-input reason-select" data-group="{name}" style="color:black;">',
                         '<option value="">선택</option>',
-                        '<option value="normal">정상</option>',
-                        '<option value="error">오류</option>',
+                        '<option value="soldout">재료소진</option>',
+                        '<option value="closed">휴무</option>',
                     '</select>',
-                    '상세: ',
-                    '<input type="text" class="grp-detail-input" data-groupname="{name}" style="width:100px;">',
-                    '<button class="grp-save-btn" data-groupname="{name}" style="margin-left:5px;">저장</button>',
+                    '&nbsp;&nbsp;상세사유: ',
+                    '<input type="text" class="header-input reason-detail" data-group="{name}" style="color:black; width:120px;"/>',
+                    '&nbsp;<button class="header-btn-save" data-group="{name}">저장</button>',
                 '</div>'
             ]
         }],
 
-        // 핵심 2: 이벤트 리스너 설정
+        // 4. 핵심: 이벤트 처리 (입력창 클릭 시 그룹 접힘 방지)
         viewConfig: {
             listeners: {
                 afterrender: function(view) {
+                    // 뷰의 엘리먼트에 이벤트를 위임(delegation)하여 처리
                     var viewEl = view.getEl();
 
-                    // (1) 클릭 이벤트 전파 방지 (입력 필드 클릭 시 그룹이 접히는 현상 막기)
-                    viewEl.on('click', function(e) {
-                        e.stopPropagation(); 
-                    }, null, { delegate: 'select.grp-reason-select, input.grp-detail-input, button.grp-save-btn' });
-                    
-                    // mousedown에서도 막아야 포커스 이동 시 드래그나 닫힘 방지에 유리함
-                    viewEl.on('mousedown', function(e) {
+                    // (1) 입력 필드 클릭/포커스 시 그룹 토글(접기) 방지
+                    // mousedown과 click 모두 막아야 안전합니다.
+                    var stopPropagationFn = function(e) {
                         e.stopPropagation();
-                    }, null, { delegate: 'select.grp-reason-select, input.grp-detail-input' });
+                    };
 
+                    // select, input, button 태그에 대해 이벤트 전파 차단
+                    viewEl.on('mousedown', stopPropagationFn, null, { delegate: '.header-input, .header-btn-save' });
+                    viewEl.on('click', stopPropagationFn, null, { delegate: '.header-input, .header-btn-save' });
+                    viewEl.on('dblclick', stopPropagationFn, null, { delegate: '.header-input, .header-btn-save' });
 
-                    // (2) 데이터 변경/저장 감지 로직
-                    
-                    // 예시: 저장 버튼 클릭 이벤트
+                    // (2) 저장 버튼 클릭 등 로직 처리
                     viewEl.on('click', function(e, t) {
-                        // 클릭된 버튼의 그룹명 가져오기
-                        var groupName = e.getTarget().getAttribute('data-groupname');
+                        var target = e.getTarget();
+                        var groupName = target.getAttribute('data-group');
                         
-                        // 해당 그룹의 select와 input 요소 찾기 (DOM 탐색)
-                        // 주의: ExtJS 4.2 Grid 구조상 헤더 DOM을 찾는 방식은 상황에 따라 다를 수 있음
-                        // 여기서는 버튼의 부모(div) 안에서 찾습니다.
-                        var parentDiv = Ext.get(t).up('div');
-                        var selectVal = parentDiv.down('.grp-reason-select').dom.value;
-                        var inputVal = parentDiv.down('.grp-detail-input').dom.value;
+                        // 현재 클릭된 버튼이 속한 부모 div 찾기
+                        var parentDiv = Ext.get(target).up('div');
+                        
+                        // 부모 div 아래의 select와 input 값 찾기
+                        var reasonVal = parentDiv.down('.reason-select').getValue();
+                        var detailVal = parentDiv.down('.reason-detail').getValue();
 
-                        Ext.Msg.alert('저장 확인', 
-                            '그룹: ' + groupName + '<br>' +
-                            '사유: ' + selectVal + '<br>' +
-                            '상세: ' + inputVal
-                        );
-
-                    }, null, { delegate: 'button.grp-save-btn' });
+                        console.log('Group:', groupName, 'Reason:', reasonVal, 'Detail:', detailVal);
+                        alert('저장됨:\n그룹: ' + groupName + '\n사유: ' + reasonVal + '\n상세: ' + detailVal);
+                        
+                    }, null, { delegate: '.header-btn-save' });
                 }
             }
         }
