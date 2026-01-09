@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>ExtJS 4.2 Grouped Grid - 헤더 컨트롤 초기 로딩 보장</title>
+    <title>ExtJS 4.2 Grouped Grid - 헤더 컨트롤 초기 로딩 완벽 보장</title>
 
     <link rel="stylesheet" type="text/css" 
           href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
@@ -51,29 +51,38 @@
                         '    </div>',
                         '</div>'
                     ].join(''),
-                    startCollapsed: false   // 처음부터 펼쳐진 상태
+                    startCollapsed: false
                 }],
                 height: 500,
                 width: 800,
                 renderTo: Ext.getBody(),
                 viewConfig: {
                     listeners: {
-                        // 그리드 뷰가 완전히 준비된 후 실행 (DOM 존재 보장)
                         viewready: function(view) {
+                            // viewready 후 강제로 한번 refresh 해서 그룹 헤더 확실히 그리기
+                            Ext.defer(function() {
+                                view.refresh();
+                            }, 100);
+                        },
+                        refresh: function(view) {
+                            // refresh 될 때마다 모든 그룹 컨트롤 생성 시도 (초기 로딩 보장)
                             createAllGroupControls();
                         },
-                        // 그룹 접기/펼치기 시 해당 그룹 컨트롤 재생성
                         groupcollapse: function(view, node, groupName) {
-                            Ext.defer(createControlsForGroup, 100, this, [groupName]);
+                            Ext.defer(function() {
+                                createControlsForGroup(groupName);
+                            }, 150);
                         },
                         groupexpand: function(view, node, groupName) {
-                            Ext.defer(createControlsForGroup, 100, this, [groupName]);
+                            Ext.defer(function() {
+                                createControlsForGroup(groupName);
+                            }, 150);
                         }
                     }
                 }
             });
 
-            // 모든 그룹에 대해 컨트롤 생성 (초기 로딩용)
+            // 모든 그룹에 대해 컨트롤 생성
             function createAllGroupControls() {
                 var groups = employeeStore.getGroups();
                 if (!groups || !groups.items) return;
@@ -83,12 +92,11 @@
                 });
             }
 
-            // 개별 그룹 컨트롤 생성 (중복 방지)
+            // 개별 그룹 컨트롤 생성 (중복 방지 + 안전한 ID 처리)
             function createControlsForGroup(groupName) {
-                // 그룹명에 특수문자가 있을 수 있으니 안전하게 escape
-                var safeName = Ext.String.htmlEncode(groupName);
-                var selectEl = Ext.get('select-' + safeName);
-                var inputEl = Ext.get('input-' + safeName);
+                var encodedName = Ext.String.htmlEncode(groupName);  // 특수문자 방지
+                var selectEl = Ext.get('select-' + encodedName);
+                var inputEl = Ext.get('input-' + encodedName);
 
                 if (selectEl && !selectEl.hasCls('control-created')) {
                     new Ext.form.field.ComboBox({
