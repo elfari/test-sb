@@ -1,84 +1,99 @@
-CREATE OR REPLACE PROCEDURE P_MRO_SIM_CHECK IS
+Ext.onReady(function() {
 
-    /* 변수 선언부: 루프 내에서 사용할 변수나 카운터 등이 있다면 선언 */
-    v_process_cnt NUMBER := 0;
+    // 1. 데이터 모델 및 스토어
+    Ext.define('Employee', {
+        extend: 'Ext.data.Model',
+        fields: ['name', 'department', 'position', 'salary']
+    });
 
-BEGIN
-    /* 1. 대상 조회 루프 (STATUS='C' 이고 WORKING 컬럼이 비어있는 건) */
-    FOR r IN (
-        SELECT REQ_NO, 
-               MATERIAL_NAME, 
-               CATEGORY_ID -- 성능 최적화를 위해 카테고리 정보도 함께 조회 권장
-          FROM MRO_INFO
-         WHERE STATUS = 'C'
-           AND WORKING IS NULL
-    ) 
-    LOOP
-        BEGIN
-            /* 2-1. 기존 분석 데이터 삭제 (재작업 시 중복 방지) */
-            DELETE FROM MRO_INFO_SIMILAR 
-             WHERE REQ_NO = r.REQ_NO;
+    var employeeStore = Ext.create('Ext.data.Store', {
+        model: 'Employee',
+        groupField: 'department',
+        data: [
+            { name: '김철수', department: '개발팀', position: '대리', salary: 5000 },
+            { name: '이영희', department: '개발팀', position: '사원', salary: 3500 },
+            { name: '박민수', department: '인사팀', position: '과장', salary: 6000 },
+            { name: '최지우', department: '인사팀', position: '대리', salary: 4800 },
+            { name: '강동원', department: '영업팀', position: '부장', salary: 7500 }
+        ]
+    });
 
-            /* 2-2. 유사도 함수 호출 및 결과 저장 (INSERT) */
-            INSERT INTO MRO_INFO_SIMILAR (
-                REQ_NO,
-                SIMILAR_MASTID,
-                SIMILARITY_PCT,
-                RANK,
-                CREATED_DATE -- 생성일자 (테이블에 컬럼이 있다면)
-            )
-            SELECT r.REQ_NO,
-                   MAT_ID,
-                   SIM_SCORE,
-                   RNK,
-                   SYSDATE
-              FROM (
-                    SELECT MAT_ID,
-                           SIM_SCORE,
-                           ROW_NUMBER() OVER(ORDER BY SIM_SCORE DESC) AS RNK
-                      FROM (
-                            SELECT MAT_ID,
-                                   /* 함수 호출: 기존 자재명 vs 요청 자재명 */
-                                   FN_SIMILARITY_PCT(MATERIAL_NAME, r.MATERIAL_NAME) AS SIM_SCORE
-                              FROM MASTOUT
-                             WHERE 1=1
-                               /* [성능 핵심] 전체 100만 건 비교는 느리므로 반드시 필터링 권장 
-                                  예: 같은 카테고리 내에서만 비교 */
-                               -- AND CATEGORY_ID = r.CATEGORY_ID 
-                           )
-                     WHERE SIM_SCORE >= 90  -- 유사도 90% 이상인 것만
-                   )
-             WHERE RNK <= 10; -- 상위 10건만 저장
+    // 2. 그리드 생성
+    Ext.create('Ext.grid.Panel', {
+        title: '그룹 헤더에 입력 필드 추가 예제',
+        store: employeeStore,
+        width: 700,
+        height: 400,
+        renderTo: Ext.getBody(),
+        columns: [
+            { text: '이름', dataIndex: 'name', flex: 1 },
+            { text: '직급', dataIndex: 'position', width: 100 },
+            { text: '연봉', dataIndex: 'salary', width: 100, renderer: Ext.util.Format.numberRenderer('0,000') }
+        ],
 
-            /* 3. 작업 완료 처리 (중요) */
-            /* WORKING 컬럼을 'Y'(완료)로 업데이트하여 다음 실행 시 제외되도록 함 */
-            UPDATE MRO_INFO
-               SET WORKING = 'Y'
-             WHERE REQ_NO = r.REQ_NO;
+        features: [{
+            ftype: 'grouping',
+            hideGroupedHeader: true,
+            startCollapsed: false,
             
-            /* 건별 커밋 (대량 데이터 처리 시 부하 분산) */
-            COMMIT;
-            
-            v_process_cnt := v_process_cnt + 1;
+            // 핵심 1: HTML 태그로 우측(float:right)에 입력 필드 배치
+            // data-groupname 속성에 현재 그룹명({name})을 넣어 나중에 식별합니다.
+            groupHeaderTpl: [
+                '{name} ({rows.length}명)',
+                '<div style="float:right; margin-right:10px; font-weight:normal;">',
+                    '사유: ',
+                    '<select class="grp-reason-select" data-groupname="{name}" style="margin-right:5px;">',
+                        '<option value="">선택</option>',
+                        '<option value="normal">정상</option>',
+                        '<option value="error">오류</option>',
+                    '</select>',
+                    '상세: ',
+                    '<input type="text" class="grp-detail-input" data-groupname="{name}" style="width:100px;">',
+                    '<button class="grp-save-btn" data-groupname="{name}" style="margin-left:5px;">저장</button>',
+                '</div>'
+            ]
+        }],
 
-        EXCEPTION
-            WHEN OTHERS THEN
-                /* 특정 건에서 에러가 나더라도 루프를 멈추지 않고 다음 건으로 진행 */
-                ROLLBACK; -- 해당 건의 작업만 취소
-                
-                /* 에러 발생 표시 (WORKING 컬럼을 'E'(Error) 등으로 처리) */
-                UPDATE MRO_INFO
-                   SET WORKING = 'E' 
-                 WHERE REQ_NO = r.REQ_NO;
-                 
-                COMMIT;
-                DBMS_OUTPUT.PUT_LINE('Error on REQ_NO ' || r.REQ_NO || ': ' || SQLERRM);
-        END;
-        
-    END LOOP;
+        // 핵심 2: 이벤트 리스너 설정
+        viewConfig: {
+            listeners: {
+                afterrender: function(view) {
+                    var viewEl = view.getEl();
 
-    DBMS_OUTPUT.PUT_LINE('Total Processed: ' || v_process_cnt);
+                    // (1) 클릭 이벤트 전파 방지 (입력 필드 클릭 시 그룹이 접히는 현상 막기)
+                    viewEl.on('click', function(e) {
+                        e.stopPropagation(); 
+                    }, null, { delegate: 'select.grp-reason-select, input.grp-detail-input, button.grp-save-btn' });
+                    
+                    // mousedown에서도 막아야 포커스 이동 시 드래그나 닫힘 방지에 유리함
+                    viewEl.on('mousedown', function(e) {
+                        e.stopPropagation();
+                    }, null, { delegate: 'select.grp-reason-select, input.grp-detail-input' });
 
-END P_MRO_SIM_CHECK;
-/
 
+                    // (2) 데이터 변경/저장 감지 로직
+                    
+                    // 예시: 저장 버튼 클릭 이벤트
+                    viewEl.on('click', function(e, t) {
+                        // 클릭된 버튼의 그룹명 가져오기
+                        var groupName = e.getTarget().getAttribute('data-groupname');
+                        
+                        // 해당 그룹의 select와 input 요소 찾기 (DOM 탐색)
+                        // 주의: ExtJS 4.2 Grid 구조상 헤더 DOM을 찾는 방식은 상황에 따라 다를 수 있음
+                        // 여기서는 버튼의 부모(div) 안에서 찾습니다.
+                        var parentDiv = Ext.get(t).up('div');
+                        var selectVal = parentDiv.down('.grp-reason-select').dom.value;
+                        var inputVal = parentDiv.down('.grp-detail-input').dom.value;
+
+                        Ext.Msg.alert('저장 확인', 
+                            '그룹: ' + groupName + '<br>' +
+                            '사유: ' + selectVal + '<br>' +
+                            '상세: ' + inputVal
+                        );
+
+                    }, null, { delegate: 'button.grp-save-btn' });
+                }
+            }
+        }
+    });
+});
