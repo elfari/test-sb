@@ -1,142 +1,33 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>ExtJS 4.2 Grouped Grid Custom Header</title>
+SET SERVEROUTPUT ON; -- 출력 결과를 보기 위해 필수 설정
 
-    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css">
-    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
-
-    <style>
-        /* 그룹 헤더의 접기/펼치기 아이콘 숨김 및 커서 변경 */
-        .x-grid-group-hd {
-            cursor: default !important;
-        }
-        .x-grid-group-hd .x-grid-group-icon {
-            display: none !important;
-        }
-        /* 그룹 헤더 텍스트 수직 정렬 보정 */
-        .x-grid-group-title {
-            line-height: 22px; 
-        }
-    </style>
-
-    <script type="text/javascript">
-        Ext.onReady(function() {
-
-            var employeeStore = Ext.create('Ext.data.Store', {
-                storeId: 'employeeStore',
-                fields: ['name', 'seniority', 'department'],
-                groupField: 'department',
-                data: {
-                    employees: [
-                        { name: '김철수', seniority: 7, department: '경영' },
-                        { name: '이영희', seniority: 2, department: '영업' },
-                        { name: '박민수', seniority: 3, department: '영업' },
-                        { name: '최지연', seniority: 4, department: '회계' },
-                        { name: '정하나', seniority: 5, department: '회계' },
-                        { name: '홍길동', seniority: 10, department: '경영' }
-                    ]
-                },
-                proxy: {
-                    type: 'memory',
-                    reader: { type: 'json', root: 'employees' }
-                }
-            });
-
-            Ext.create('Ext.grid.Panel', {
-                title: '직원 목록 (부서별 그룹화 + 헤더 컨트롤)',
-                store: employeeStore,
-                columns: [
-                    { text: '이름', dataIndex: 'name', flex: 1 },
-                    { text: '근속년수', dataIndex: 'seniority', width: 100 },
-                    { text: '부서', dataIndex: 'department', width: 120 }
-                ],
-                features: [{
-                    ftype: 'grouping',
-                    // [변경] 그룹 헤더 템플릿: 우측에 컨트롤이 들어갈 placeholder(div) 추가
-                    // {name}은 그룹명(부서명)입니다. ID 중복 방지를 위해 그룹명을 ID에 포함시킵니다.
-                    groupHeaderTpl: [
-                        '<div style="width:100%; overflow:hidden;">',
-                        '    <div style="float:left; line-height:24px;">{name} ({rows.length} 명)</div>',
-                        '    <div style="float:right; margin-right:10px;">',
-                        '        <div id="header-input-{name}" style="display:inline-block; vertical-align:middle; margin-right:5px;"></div>',
-                        '        <div id="header-combo-{name}" style="display:inline-block; vertical-align:middle;"></div>',
-                        '    </div>',
-                        '</div>'
-                    ],
-                    startCollapsed: false,
-                    enableGroupingMenu: false, // 그룹 메뉴 비활성화
-                    listeners: {
-                        // [변경] 헤더 클릭 시 접기/펼치기 동작 차단
-                        groupclick: function(view, node, group, e) {
-                            return false; 
-                        }
-                    }
-                }],
-                height: 400,
-                width: 600,
-                renderTo: Ext.getBody(),
-                viewConfig: {
-                    listeners: {
-                        // [변경] 뷰가 처음 그려질 때와 갱신될 때(정렬 등) 컨트롤 렌더링 실행
-                        viewready: function(view) {
-                            renderGroupControls(view);
-                        },
-                        refresh: function(view) {
-                            renderGroupControls(view);
-                        }
-                    }
-                }
-            });
-
-            // 그룹 헤더에 컴포넌트를 렌더링하는 함수
-            function renderGroupControls(view) {
-                var store = view.getStore();
-                var groups = store.getGroups(); // 현재 그룹 정보 가져오기
-
-                Ext.each(groups, function(group) {
-                    var groupName = group.name;
-                    
-                    // 1. 콤보박스 렌더링
-                    // 특수문자나 공백이 있을 경우 id 처리가 필요할 수 있으나 여기선 단순 문자열로 가정
-                    var comboContainer = Ext.get('header-combo-' + groupName);
-                    
-                    // 컨테이너가 존재하고, 내용이 비어있을 때만 렌더링 (중복 방지)
-                    if (comboContainer && comboContainer.dom.innerHTML === "") {
-                        Ext.create('Ext.form.field.ComboBox', {
-                            renderTo: comboContainer,
-                            width: 100,
-                            store: ['승인', '반려', '대기'],
-                            emptyText: '상태 선택',
-                            editable: false,
-                            listeners: {
-                                change: function(field, newValue) {
-                                    console.log(groupName + ' 콤보 변경:', newValue);
-                                }
-                            }
-                        });
-                    }
-
-                    // 2. 인풋박스 렌더링
-                    var inputContainer = Ext.get('header-input-' + groupName);
-                    if (inputContainer && inputContainer.dom.innerHTML === "") {
-                        Ext.create('Ext.form.field.Text', {
-                            renderTo: inputContainer,
-                            width: 120,
-                            emptyText: '메모 입력',
-                            listeners: {
-                                change: function(field, newValue) {
-                                    console.log(groupName + ' 입력:', newValue);
-                                }
-                            }
-                        });
-                    }
-                });
-            }
-        });
-    </script>
-</head>
-<body>
-</body>
-</html>
+DECLARE
+    -- 1. 문자열을 담을 배열 타입 정의 (가변 배열)
+    TYPE t_keyword_array IS TABLE OF VARCHAR2(100);
+    
+    -- 2. 검색할 키워드 리스트 초기화
+    v_keywords t_keyword_array := t_keyword_array('C4', '사불', 'd4', '플루', 'f23', '화학');
+    
+BEGIN
+    -- 3. 키워드 배열만큼 반복 (Outer Loop)
+    FOR i IN 1 .. v_keywords.COUNT LOOP
+        
+        -- 헤더 출력
+        DBMS_OUTPUT.PUT_LINE('[' || v_keywords(i) || '] 조회한결과');
+        
+        -- 4. 해당 키워드로 테이블 조회 및 결과 반복 (Inner Loop)
+        --    별도의 커서 선언 없이 FOR LOOP 안에서 바로 쿼리 사용 (Implicit Cursor)
+        FOR r IN (
+            SELECT mastid, item_name
+              FROM prop_strn_item_name
+             WHERE UPPER(propvalue) LIKE UPPER('%' || v_keywords(i) || '%')
+        ) LOOP
+            -- 결과 출력 (splitter ^ 로 연결)
+            DBMS_OUTPUT.PUT_LINE(r.mastid || '^' || r.item_name);
+        END LOOP;
+        
+        -- 키워드 그룹 간 줄바꿈이 필요하다면 아래 주석 해제
+        -- DBMS_OUTPUT.NEW_LINE; 
+        
+    END LOOP;
+END;
+/
