@@ -1,91 +1,108 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>ExtJS 4.2 TreeGrid Example</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css" rel="stylesheet" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
+Ext.onReady(function() {
 
-    <script type="text/javascript">
-        Ext.onReady(function() {
-            
-            // 1. 데이터 모델 정의 (Model)
-            Ext.define('TaskModel', {
-                extend: 'Ext.data.Model',
-                fields: [
-                    {name: 'task',     type: 'string'},
-                    {name: 'user',     type: 'string'},
-                    {name: 'duration', type: 'string'}
-                ]
-            });
+    // 1. [사유] 콤보박스용 데이터 스토어 (공통코드 성격)
+    var reasonStore = Ext.create('Ext.data.Store', {
+        fields: ['code', 'name'],
+        data: [
+            {code: 'DELAY', name: '일정 지연'},
+            {code: 'RESOURCE', name: '인력 부족'},
+            {code: 'SPEC', name: '스펙 변경'},
+            {code: 'ETC', name: '기타'}
+        ]
+    });
 
-            // 2. 트리 스토어 생성 (TreeStore)
-            // 실제 구현 시에는 proxy를 사용하여 서버(Oracle DB 등)에서 JSON을 받아옵니다.
-            var store = Ext.create('Ext.data.TreeStore', {
-                model: 'TaskModel',
-                root: {
-                    expanded: true,
+    // 2. 메인 데이터 모델 (사유, 상세사유 필드 추가)
+    Ext.define('TaskModel', {
+        extend: 'Ext.data.Model',
+        fields: [
+            {name: 'task', type: 'string'},
+            {name: 'user', type: 'string'},
+            {name: 'duration', type: 'string'},
+            {name: 'reasonCode', type: 'string'}, // 사유 코드 (DB 저장용)
+            {name: 'reasonDetail', type: 'string'} // 상세 사유
+        ]
+    });
+
+    // 3. 트리 스토어 (데이터 예시에 사유/상세사유 빈값 포함)
+    var store = Ext.create('Ext.data.TreeStore', {
+        model: 'TaskModel',
+        root: {
+            expanded: true,
+            children: [
+                { 
+                    task: "프로젝트 설계", user: "홍길동", duration: "10일", expanded: true,
                     children: [
-                        { 
-                            task: "프로젝트 설계", 
-                            user: "홍길동", 
-                            duration: "10일", 
-                            expanded: true,
-                            children: [
-                                { task: "DB 스키마 설계", user: "김철수", duration: "3일", leaf: true },
-                                { task: "UI 프로토타입", user: "이영희", duration: "5일", leaf: true },
-                                { task: "요구사항 분석", user: "홍길동", duration: "2일", leaf: true }
-                            ]
-                        },
-                        { 
-                            task: "프로젝트 개발", 
-                            user: "박민수", 
-                            duration: "30일", 
-                            expanded: true, // 초기 로딩 시 펼쳐짐 설정
-                            children: [
-                                { task: "공통 모듈 개발", user: "최지훈", duration: "10일", leaf: true },
-                                { task: "비즈니스 로직 구현", user: "박민수", duration: "20일", leaf: true }
-                            ]
-                        },
-                        { task: "테스트 및 배포", user: "운영팀", duration: "5일", leaf: true }
+                        { task: "DB 스키마 설계", user: "김철수", duration: "3일", leaf: true, reasonCode: 'SPEC', reasonDetail: '컬럼 추가 요청' },
+                        { task: "UI 프로토타입", user: "이영희", duration: "5일", leaf: true, reasonCode: '', reasonDetail: '' }
                     ]
                 }
-            });
+                // ... 나머지 데이터
+            ]
+        }
+    });
 
-            // 3. 트리 패널 생성 (TreePanel) -> 이것이 TreeGrid 역할
-            Ext.create('Ext.tree.Panel', {
-                title: '개발 일정 관리 (TreeGrid Sample)',
-                width: 600,
-                height: 400,
-                renderTo: Ext.getBody(),
-                collapsible: true,
-                useArrows: true,      // 화살표 아이콘 사용
-                rootVisible: false,   // 최상위 루트 노드 숨김
-                store: store,
-                multiSelect: true,
-                
-                // 그리드 컬럼 설정
-                columns: [{
-                    xtype: 'treecolumn', // 핵심: 계층 구조가 나타날 컬럼
-                    text: '작업명 (Task)',
-                    flex: 2,             // 너비 비율
-                    sortable: true,
-                    dataIndex: 'task'
-                },{
-                    text: '담당자',
-                    flex: 1,
-                    dataIndex: 'user',
-                    sortable: true
-                },{
-                    text: '소요 기간',
-                    width: 100,
-                    dataIndex: 'duration',
-                    align: 'center'      // 텍스트 정렬
-                }]
-            });
-        });
-    </script>
-</head>
-<body>
-</body>
-</html>
+    // 4. 트리 패널 생성
+    Ext.create('Ext.tree.Panel', {
+        title: '개발 일정 관리 (입력 가능)',
+        width: 800, // 너비 좀 더 확보
+        height: 400,
+        renderTo: Ext.getBody(),
+        rootVisible: false,
+        useArrows: true,
+        store: store,
+
+        // ★ 핵심 1: 셀 에디팅 플러그인 장착
+        plugins: [
+            Ext.create('Ext.grid.plugin.CellEditing', {
+                clicksToEdit: 1 // 1번 클릭하면 바로 입력 모드 전환 (기본값은 2)
+            })
+        ],
+
+        columns: [{
+            xtype: 'treecolumn',
+            text: '작업명',
+            flex: 2,
+            dataIndex: 'task'
+        },{
+            text: '담당자',
+            flex: 1,
+            dataIndex: 'user'
+        },{
+            text: '소요 기간',
+            width: 80,
+            dataIndex: 'duration',
+            align: 'center'
+        },
+        // ★ 핵심 2: 사유 (ComboBox)
+        {
+            text: '지연 사유 (선택)',
+            width: 120,
+            dataIndex: 'reasonCode', // 실제 값은 코드로 저장
+            editor: {
+                xtype: 'combobox',
+                store: reasonStore,
+                queryMode: 'local',
+                displayField: 'name', // 화면에 보일 필드
+                valueField: 'code',   // 실제 저장될 값
+                editable: false       // 직접 타이핑 불가, 선택만 가능
+            },
+            // 렌더러: 저장된 코드('DELAY')를 화면용 텍스트('일정 지연')로 변환해 보여줌
+            renderer: function(value) {
+                if (!value) return '';
+                var idx = reasonStore.find('code', value);
+                var rec = reasonStore.getAt(idx);
+                return rec ? rec.get('name') : value;
+            }
+        },
+        // ★ 핵심 3: 상세 사유 (TextField)
+        {
+            text: '상세 사유 (입력)',
+            flex: 2, // 남은 공간 채우기
+            dataIndex: 'reasonDetail',
+            editor: {
+                xtype: 'textfield',
+                allowBlank: true
+            }
+        }]
+    });
+});
