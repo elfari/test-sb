@@ -1,108 +1,20 @@
-Ext.onReady(function() {
-
-    // 1. [사유] 콤보박스용 데이터 스토어 (공통코드 성격)
-    var reasonStore = Ext.create('Ext.data.Store', {
-        fields: ['code', 'name'],
-        data: [
-            {code: 'DELAY', name: '일정 지연'},
-            {code: 'RESOURCE', name: '인력 부족'},
-            {code: 'SPEC', name: '스펙 변경'},
-            {code: 'ETC', name: '기타'}
-        ]
-    });
-
-    // 2. 메인 데이터 모델 (사유, 상세사유 필드 추가)
-    Ext.define('TaskModel', {
-        extend: 'Ext.data.Model',
-        fields: [
-            {name: 'task', type: 'string'},
-            {name: 'user', type: 'string'},
-            {name: 'duration', type: 'string'},
-            {name: 'reasonCode', type: 'string'}, // 사유 코드 (DB 저장용)
-            {name: 'reasonDetail', type: 'string'} // 상세 사유
-        ]
-    });
-
-    // 3. 트리 스토어 (데이터 예시에 사유/상세사유 빈값 포함)
-    var store = Ext.create('Ext.data.TreeStore', {
-        model: 'TaskModel',
-        root: {
-            expanded: true,
-            children: [
-                { 
-                    task: "프로젝트 설계", user: "홍길동", duration: "10일", expanded: true,
-                    children: [
-                        { task: "DB 스키마 설계", user: "김철수", duration: "3일", leaf: true, reasonCode: 'SPEC', reasonDetail: '컬럼 추가 요청' },
-                        { task: "UI 프로토타입", user: "이영희", duration: "5일", leaf: true, reasonCode: '', reasonDetail: '' }
-                    ]
+plugins: [
+    Ext.create('Ext.grid.plugin.CellEditing', {
+        clicksToEdit: 1,
+        listeners: {
+            // 편집 모드 들어가기 직전에 실행되는 이벤트
+            beforeedit: function(editor, context) {
+                var record = context.record;
+                
+                // 조건: 자식 노드(Leaf)인 경우 편집 불가 (return false로 취소)
+                // 즉, 부모 노드(폴더)만 편집 가능
+                if (record.isLeaf()) {
+                    return false; 
                 }
-                // ... 나머지 데이터
-            ]
+                
+                // (선택사항) 특정 컬럼만 제어하고 싶다면?
+                // if (record.isLeaf() && context.field === 'reasonCode') { return false; }
+            }
         }
-    });
-
-    // 4. 트리 패널 생성
-    Ext.create('Ext.tree.Panel', {
-        title: '개발 일정 관리 (입력 가능)',
-        width: 800, // 너비 좀 더 확보
-        height: 400,
-        renderTo: Ext.getBody(),
-        rootVisible: false,
-        useArrows: true,
-        store: store,
-
-        // ★ 핵심 1: 셀 에디팅 플러그인 장착
-        plugins: [
-            Ext.create('Ext.grid.plugin.CellEditing', {
-                clicksToEdit: 1 // 1번 클릭하면 바로 입력 모드 전환 (기본값은 2)
-            })
-        ],
-
-        columns: [{
-            xtype: 'treecolumn',
-            text: '작업명',
-            flex: 2,
-            dataIndex: 'task'
-        },{
-            text: '담당자',
-            flex: 1,
-            dataIndex: 'user'
-        },{
-            text: '소요 기간',
-            width: 80,
-            dataIndex: 'duration',
-            align: 'center'
-        },
-        // ★ 핵심 2: 사유 (ComboBox)
-        {
-            text: '지연 사유 (선택)',
-            width: 120,
-            dataIndex: 'reasonCode', // 실제 값은 코드로 저장
-            editor: {
-                xtype: 'combobox',
-                store: reasonStore,
-                queryMode: 'local',
-                displayField: 'name', // 화면에 보일 필드
-                valueField: 'code',   // 실제 저장될 값
-                editable: false       // 직접 타이핑 불가, 선택만 가능
-            },
-            // 렌더러: 저장된 코드('DELAY')를 화면용 텍스트('일정 지연')로 변환해 보여줌
-            renderer: function(value) {
-                if (!value) return '';
-                var idx = reasonStore.find('code', value);
-                var rec = reasonStore.getAt(idx);
-                return rec ? rec.get('name') : value;
-            }
-        },
-        // ★ 핵심 3: 상세 사유 (TextField)
-        {
-            text: '상세 사유 (입력)',
-            flex: 2, // 남은 공간 채우기
-            dataIndex: 'reasonDetail',
-            editor: {
-                xtype: 'textfield',
-                allowBlank: true
-            }
-        }]
-    });
-});
+    })
+],
