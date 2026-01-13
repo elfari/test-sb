@@ -1,20 +1,196 @@
-plugins: [
-    Ext.create('Ext.grid.plugin.CellEditing', {
-        clicksToEdit: 1,
-        listeners: {
-            // 편집 모드 들어가기 직전에 실행되는 이벤트
-            beforeedit: function(editor, context) {
-                var record = context.record;
-                
-                // 조건: 자식 노드(Leaf)인 경우 편집 불가 (return false로 취소)
-                // 즉, 부모 노드(폴더)만 편집 가능
-                if (record.isLeaf()) {
-                    return false; 
-                }
-                
-                // (선택사항) 특정 컬럼만 제어하고 싶다면?
-                // if (record.isLeaf() && context.field === 'reasonCode') { return false; }
-            }
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ExtJS 4.2 TreeGrid Complete Sample</title>
+    
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
+
+    <style type="text/css">
+        /* 1. 입력 가능한 셀(부모) 강조 스타일 */
+        .red-border-cell {
+            border: 2px solid red !important; /* 빨간 테두리 강제 적용 */
+            background-color: #fff0f0;        /* 옅은 붉은 배경 */
+            font-weight: bold;
         }
-    })
-],
+    </style>
+
+    <script type="text/javascript">
+        Ext.onReady(function() {
+            
+            // -------------------------------------------------------
+            // 1. 공통 코드 스토어 (사유 콤보박스용)
+            // -------------------------------------------------------
+            var reasonStore = Ext.create('Ext.data.Store', {
+                fields: ['code', 'name'],
+                data: [
+                    {code: 'DELAY',    name: '일정 지연'},
+                    {code: 'RESOURCE', name: '인력 부족'},
+                    {code: 'SPEC',     name: '스펙 변경'},
+                    {code: 'ETC',      name: '기타 사유'}
+                ]
+            });
+
+            // -------------------------------------------------------
+            // 2. 메인 데이터 모델
+            // -------------------------------------------------------
+            Ext.define('TaskModel', {
+                extend: 'Ext.data.Model',
+                fields: [
+                    {name: 'task',         type: 'string'},
+                    {name: 'user',         type: 'string'},
+                    {name: 'duration',     type: 'string'},
+                    {name: 'reasonCode',   type: 'string'}, // 콤보박스 값 (코드)
+                    {name: 'reasonDetail', type: 'string'}  // 인풋박스 값
+                ]
+            });
+
+            // -------------------------------------------------------
+            // 3. 트리 데이터 스토어 (샘플 데이터)
+            // -------------------------------------------------------
+            var store = Ext.create('Ext.data.TreeStore', {
+                model: 'TaskModel',
+                root: {
+                    expanded: true,
+                    children: [
+                        { 
+                            task: "1. 프로젝트 착수 (부모-입력가능)", 
+                            user: "PM", 
+                            leaf: false, // ★ 부모 노드 (폴더)
+                            expanded: true,
+                            reasonCode: 'DELAY', // 초기값 예시
+                            reasonDetail: '킥오프 미팅 지연',
+                            children: [
+                                { task: "환경 분석 (자식-입력불가)", user: "김철수", duration: "3일", leaf: true },
+                                { task: "요구사항 정의 (자식-입력불가)", user: "이영희", duration: "5일", leaf: true }
+                            ]
+                        },
+                        { 
+                            task: "2. 개발 단계 (부모-입력가능)", 
+                            user: "PL", 
+                            leaf: false, // ★ 부모 노드
+                            expanded: true,
+                            children: [
+                                { task: "공통 모듈 (자식-입력불가)", user: "박민수", duration: "10일", leaf: true },
+                                { task: "화면 구현 (자식-입력불가)", user: "최지훈", duration: "20일", leaf: true }
+                            ]
+                        }
+                    ]
+                }
+            });
+
+            // -------------------------------------------------------
+            // 4. 트리 그리드 패널 생성
+            // -------------------------------------------------------
+            Ext.create('Ext.tree.Panel', {
+                title: '개발 진척 관리 (부모 레코드만 사유 입력)',
+                width: 900,
+                height: 500,
+                renderTo: Ext.getBody(),
+                rootVisible: false, // Root 숨김
+                useArrows: true,    // 화살표 아이콘
+                store: store,
+                
+                // [편집 플러그인 설정]
+                plugins: [
+                    Ext.create('Ext.grid.plugin.CellEditing', {
+                        clicksToEdit: 1, // 원클릭 수정
+                        listeners: {
+                            // ★ 편집 진입 전 조건 체크
+                            beforeedit: function(editor, e) {
+                                // 자식 노드(Leaf)라면 편집 차단 (return false)
+                                if (e.record.isLeaf()) {
+                                    return false; 
+                                }
+                            }
+                        }
+                    })
+                ],
+
+                columns: [{
+                    xtype: 'treecolumn', // 트리 구조 컬럼
+                    text: '작업명',
+                    flex: 1.5,
+                    dataIndex: 'task'
+                },{
+                    text: '담당자',
+                    width: 80,
+                    dataIndex: 'user',
+                    align: 'center'
+                },{
+                    text: '기간',
+                    width: 60,
+                    dataIndex: 'duration',
+                    align: 'center'
+                },
+                // ---------------------------------------------------
+                // [사유] 콤보박스 컬럼
+                // ---------------------------------------------------
+                {
+                    text: '지연 사유 (선택)',
+                    width: 150,
+                    dataIndex: 'reasonCode',
+                    editor: {
+                        xtype: 'combobox',
+                        store: reasonStore,
+                        queryMode: 'local',
+                        displayField: 'name',
+                        valueField: 'code',
+                        editable: false // 타이핑 불가, 선택만 가능
+                    },
+                    renderer: function(value, metaData, record) {
+                        // 1. 스타일 처리
+                        if (!record.isLeaf()) {
+                            // 부모: 빨간 테두리 적용
+                            metaData.tdCls = 'red-border-cell';
+                        } else {
+                            // 자식: 회색 배경 처리
+                            metaData.style = "background-color: #f5f5f5; color: #ccc;";
+                            return "-";
+                        }
+
+                        // 2. 값 변환 (Code -> Name)
+                        var idx = reasonStore.find('code', value);
+                        return idx !== -1 ? reasonStore.getAt(idx).get('name') : value;
+                    }
+                },
+                // ---------------------------------------------------
+                // [상세사유] 텍스트 필드 컬럼
+                // ---------------------------------------------------
+                {
+                    text: '상세 사유 (직접 입력)',
+                    flex: 2,
+                    dataIndex: 'reasonDetail',
+                    editor: {
+                        xtype: 'textfield',
+                        allowBlank: true
+                    },
+                    renderer: function(value, metaData, record) {
+                        // 스타일 처리
+                        if (!record.isLeaf()) {
+                            // 부모: 빨간 테두리 적용
+                            metaData.tdCls = 'red-border-cell';
+                        } else {
+                            // 자식: 회색 배경 처리
+                            metaData.style = "background-color: #f5f5f5; color: #ccc;";
+                            return "";
+                        }
+                        return value;
+                    }
+                }]
+            });
+        });
+    </script>
+</head>
+<body>
+    <div style="padding: 20px; font-family: 'Malgun Gothic', sans-serif;">
+        <h3>ExtJS 4.2 TreeGrid Sample</h3>
+        <ul>
+            <li><b>부모 폴더:</b> 사유 및 상세사유 입력 가능 (빨간 테두리)</li>
+            <li><b>자식 파일:</b> 입력 불가 (회색 배경)</li>
+            <li><b>동작:</b> 빨간 테두리 셀을 클릭하여 테스트해보세요.</li>
+        </ul>
+    </div>
+</body>
+</html>
