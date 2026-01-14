@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>ExtJS 4.2 TreeGrid Validation Sample</title>
+    <title>ExtJS 4.2 External Access Sample</title>
     
     <link href="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/resources/css/ext-all.css" rel="stylesheet" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/4.2.1/ext-all.js"></script>
@@ -13,30 +13,86 @@
             background-color: #fff0f0;
             font-weight: bold;
         }
+        /* 외부 버튼 스타일 */
+        .external-btn {
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
     </style>
 
     <script type="text/javascript">
+        // =======================================================
+        // [완전 외부 함수] 전역 범위(Global Scope)에 선언
+        // =======================================================
+        function saveTreeData() {
+            // 1. ID를 통해 TreePanel 컴포넌트를 찾습니다.
+            var treePanel = Ext.getCmp('mainTaskTree'); 
+
+            // 혹시라도 패널이 아직 생성 안 됐을 경우 방어 코드
+            if (!treePanel) {
+                alert('트리 패널이 아직 로드되지 않았습니다.');
+                return;
+            }
+
+            var root = treePanel.getStore().getRootNode();
+            var invalidTasks = [];
+            var validData = [];
+
+            // 2. 데이터 순회 및 유효성 검사 로직 (기존과 동일)
+            root.cascadeBy(function(node) {
+                if (node.isRoot() || node.isLeaf()) return;
+
+                var task = node.get('task');
+                var rCode = node.get('reasonCode');
+                var rDetail = node.get('reasonDetail');
+
+                if (Ext.isEmpty(rCode) || Ext.isEmpty(rDetail)) {
+                    invalidTasks.push(task);
+                } else {
+                    validData.push({
+                        id: node.getId(),
+                        task: task,
+                        reasonCode: rCode,
+                        reasonDetail: rDetail
+                    });
+                }
+            });
+
+            // 3. 결과 처리
+            if (invalidTasks.length > 0) {
+                Ext.Msg.alert('저장 실패', 
+                    '다음 항목의 필수 입력값을 확인해주세요:<br><br>' + 
+                    '<b style="color:red;">' + invalidTasks.join('<br>') + '</b>'
+                );
+            } else {
+                console.log("--- [외부 함수에서 추출한 데이터] ---");
+                console.log(validData);
+                Ext.Msg.alert('성공', '외부 함수에서 저장 로직을 수행했습니다.<br>콘솔을 확인하세요.');
+            }
+        }
+
+        // =======================================================
+        // ExtJS 실행 영역
+        // =======================================================
         Ext.onReady(function() {
             
             var reasonStore = Ext.create('Ext.data.Store', {
                 fields: ['code', 'name'],
                 data: [
-                    {code: 'DELAY',    name: '일정 지연'},
+                    {code: 'DELAY', name: '일정 지연'},
                     {code: 'RESOURCE', name: '인력 부족'},
-                    {code: 'SPEC',     name: '스펙 변경'},
-                    {code: 'ETC',      name: '기타 사유'}
+                    {code: 'SPEC', name: '스펙 변경'}
                 ]
             });
 
             Ext.define('TaskModel', {
                 extend: 'Ext.data.Model',
-                fields: [
-                    {name: 'task',         type: 'string'},
-                    {name: 'user',         type: 'string'},
-                    {name: 'duration',     type: 'string'},
-                    {name: 'reasonCode',   type: 'string'},
-                    {name: 'reasonDetail', type: 'string'}
-                ]
+                fields: ['task', 'user', 'duration', 'reasonCode', 'reasonDetail']
             });
 
             var store = Ext.create('Ext.data.TreeStore', {
@@ -45,157 +101,66 @@
                     expanded: true,
                     children: [
                         { 
-                            task: "1. 프로젝트 착수", 
-                            user: "PM", 
-                            leaf: false, 
-                            expanded: true,
-                            reasonCode: 'DELAY', 
-                            reasonDetail: '킥오프 미팅 지연', // 이미 입력됨
-                            children: [
-                                { task: "환경 분석", user: "김철수", duration: "3일", leaf: true },
-                                { task: "요구사항 정의", user: "이영희", duration: "5일", leaf: true }
-                            ]
+                            task: "1. 착수 단계", user: "PM", leaf: false, expanded: true,
+                            reasonCode: 'DELAY', reasonDetail: '지연 발생',
+                            children: [{ task: "하위1", leaf: true }]
                         },
                         { 
-                            task: "2. 개발 단계", 
-                            user: "PL", 
-                            leaf: false, 
-                            expanded: true,
-                            reasonCode: '',      // 비어있음 (테스트용)
-                            reasonDetail: '',    // 비어있음
-                            children: [
-                                { task: "공통 모듈", user: "박민수", duration: "10일", leaf: true },
-                                { task: "화면 구현", user: "최지훈", duration: "20일", leaf: true }
-                            ]
+                            task: "2. 개발 단계", user: "PL", leaf: false, expanded: true,
+                            reasonCode: '', reasonDetail: '', // 비어있음
+                            children: [{ task: "하위2", leaf: true }]
                         }
                     ]
                 }
             });
 
             Ext.create('Ext.tree.Panel', {
-                title: '개발 진척 관리 (유효성 검사 포함)',
-                width: 900,
-                height: 500,
-                renderTo: Ext.getBody(),
+                // ★★★ 핵심: 컴포넌트 ID 부여 (외부 접근용) ★★★
+                id: 'mainTaskTree',
+                
+                title: '외부 함수 제어 예제',
+                width: 800,
+                height: 400,
+                renderTo: 'tree-container', // 특정 div에 렌더링
                 rootVisible: false,
                 useArrows: true,
                 store: store,
 
-                // ★ 저장 버튼 툴바 추가
-                tbar: [
-                    {
-                        xtype: 'button',
-                        text: '<b>저장 (Save)</b>',
-                        scale: 'medium',
-                        handler: function() {
-                            var treePanel = this.up('treepanel');
-                            var root = treePanel.getStore().getRootNode();
-                            
-                            var invalidTasks = [];
-                            var validData = [];
-
-                            // 트리 전체 순회하며 검사
-                            root.cascadeBy(function(node) {
-                                // Root와 자식(Leaf) 노드는 패스
-                                if (node.isRoot() || node.isLeaf()) return;
-
-                                var task = node.get('task');
-                                var rCode = node.get('reasonCode');
-                                var rDetail = node.get('reasonDetail');
-
-                                // 유효성 검사: 값이 비어있는지 확인
-                                if (Ext.isEmpty(rCode) || Ext.isEmpty(rDetail)) {
-                                    invalidTasks.push(task);
-                                } else {
-                                    validData.push({
-                                        id: node.getId(), // 필요시 ID 포함
-                                        task: task,
-                                        reasonCode: rCode,
-                                        reasonDetail: rDetail
-                                    });
-                                }
-                            });
-
-                            if (invalidTasks.length > 0) {
-                                Ext.Msg.alert('입력 오류', 
-                                    '다음 항목의 필수 입력값(사유, 상세사유)이 누락되었습니다:<br><br>' + 
-                                    '<b style="color:red;">' + invalidTasks.join('<br>') + '</b>'
-                                );
-                            } else {
-                                console.log("--- 저장할 데이터 ---");
-                                console.log(validData);
-                                Ext.Msg.alert('성공', '모두 입력되었습니다! 콘솔(F12)을 확인하세요.');
-                            }
-                        }
-                    }
-                ],
+                // 내부 툴바 버튼에서도 외부 함수 호출 가능
+                tbar: [{
+                    text: '내부 툴바 저장 버튼',
+                    handler: saveTreeData // 전역 함수 연결
+                }],
                 
                 plugins: [
                     Ext.create('Ext.grid.plugin.CellEditing', {
                         clicksToEdit: 1,
                         listeners: {
-                            beforeedit: function(editor, e) {
-                                if (e.record.isLeaf()) return false; 
-                            }
+                            beforeedit: function(e) { if (e.record.isLeaf()) return false; }
                         }
                     })
                 ],
 
                 columns: [{
-                    xtype: 'treecolumn',
-                    text: '작업명',
-                    flex: 1.5,
-                    dataIndex: 'task'
+                    xtype: 'treecolumn', text: '작업명', flex: 1.5, dataIndex: 'task'
                 },{
-                    text: '담당자',
-                    width: 80,
-                    dataIndex: 'user',
-                    align: 'center'
-                },{
-                    text: '기간',
-                    width: 60,
-                    dataIndex: 'duration',
-                    align: 'center'
-                },
-                {
-                    text: '지연 사유 (선택)',
-                    width: 150,
-                    dataIndex: 'reasonCode',
+                    text: '지연 사유', width: 150, dataIndex: 'reasonCode',
                     editor: {
-                        xtype: 'combobox',
-                        store: reasonStore,
-                        queryMode: 'local',
-                        displayField: 'name',
-                        valueField: 'code',
-                        editable: false
+                        xtype: 'combobox', store: reasonStore, displayField: 'name', valueField: 'code'
                     },
-                    renderer: function(value, metaData, record) {
-                        if (!record.isLeaf()) {
-                            metaData.tdCls = 'red-border-cell';
-                        } else {
-                            metaData.style = "background-color: #f5f5f5; color: #ccc;";
-                            return "-";
-                        }
-                        var idx = reasonStore.find('code', value);
-                        return idx !== -1 ? reasonStore.getAt(idx).get('name') : value;
+                    renderer: function(v, m, r) {
+                        if (!r.isLeaf()) m.tdCls = 'red-border-cell';
+                        else m.style = "background-color:#f5f5f5;";
+                        var idx = reasonStore.find('code', v);
+                        return idx !== -1 ? reasonStore.getAt(idx).get('name') : v;
                     }
-                },
-                {
-                    text: '상세 사유 (직접 입력)',
-                    flex: 2,
-                    dataIndex: 'reasonDetail',
-                    editor: {
-                        xtype: 'textfield',
-                        allowBlank: true
-                    },
-                    renderer: function(value, metaData, record) {
-                        if (!record.isLeaf()) {
-                            metaData.tdCls = 'red-border-cell';
-                        } else {
-                            metaData.style = "background-color: #f5f5f5; color: #ccc;";
-                            return "";
-                        }
-                        return value;
+                },{
+                    text: '상세 사유', flex: 2, dataIndex: 'reasonDetail',
+                    editor: { xtype: 'textfield' },
+                    renderer: function(v, m, r) {
+                        if (!r.isLeaf()) m.tdCls = 'red-border-cell';
+                        else m.style = "background-color:#f5f5f5;";
+                        return v;
                     }
                 }]
             });
@@ -204,12 +169,15 @@
 </head>
 <body>
     <div style="padding: 20px;">
-        <h3>저장 및 유효성 검사 테스트</h3>
-        <ul>
-            <li>'1. 프로젝트 착수'는 값이 채워져 있습니다.</li>
-            <li>'2. 개발 단계'는 비어 있으므로 <b>[저장]</b> 버튼 클릭 시 경고창이 뜹니다.</li>
-            <li>값을 입력하고 다시 누르면 콘솔에 데이터가 출력됩니다.</li>
-        </ul>
+        <h3>ExtJS 외부 함수 제어 테스트</h3>
+        
+        <button class="external-btn" onclick="saveTreeData()">
+            HTML 외부 버튼 (저장 실행)
+        </button>
+
+        <p>위 버튼을 누르면 ExtJS 컴포넌트 밖에서 자바스크립트 함수가 호출되어 그리드를 제어합니다.</p>
+
+        <div id="tree-container"></div>
     </div>
 </body>
 </html>
