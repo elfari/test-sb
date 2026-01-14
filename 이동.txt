@@ -4,49 +4,49 @@ CREATE OR REPLACE FUNCTION FNSIMPCT (
 ) RETURN NUMBER
 IS
     -- 변수 정의
-    vexistclean   VARCHAR2(4000);
-    vinputclean   VARCHAR2(4000);
-    vexistsorted  VARCHAR2(4000);
-    vinputsorted  VARCHAR2(4000);
+    v_exist_clean   VARCHAR2(4000);
+    v_input_clean   VARCHAR2(4000);
+    v_exist_sorted  VARCHAR2(4000);
+    v_input_sorted  VARCHAR2(4000);
     v_similarity    NUMBER := 0;
 BEGIN
     -- NULL 처리
-    IF pexist IS NULL OR pinput IS NULL THEN
+    IF p_exist IS NULL OR p_input IS NULL THEN
         RETURN 0;
     END IF;
 
     -- 동일 문자열 처리 (대소문자 무시)
-    IF UPPER(pexist) = UPPER(pinput) THEN
+    IF UPPER(p_exist) = UPPER(p_input) THEN
         RETURN 100;
     END IF;
 
     -- 영문, 한글, 중문, 숫자 외 모든 문자를 공백으로 치환
-    vexistclean := REGEXPREPLACE(UPPER(pexist), '[^A-Z0-9가-힣一-龥]', ' ');
-    vinputclean := REGEXPREPLACE(UPPER(pinput), '[^A-Z0-9가-힣一-龥]', ' ');
+    v_exist_clean := REGEXP_REPLACE(UPPER(p_exist), '[^A-Z0-9가-힣一-龥]', ' ');
+    v_input_clean := REGEXP_REPLACE(UPPER(p_input), '[^A-Z0-9가-힣一-龥]', ' ');
 
     -- 토큰화 후 중복 제거 및 정렬
     WITH exist_tokens AS (
-        SELECT DISTINCT REGEXPSUBSTR(vexist_clean, '[^ ]+', 1, LEVEL) AS token
+        SELECT DISTINCT REGEXP_SUBSTR(v_exist_clean, '[^ ]+', 1, LEVEL) AS token
         FROM dual
-        CONNECT BY REGEXPSUBSTR(vexist_clean, '[^ ]+', 1, LEVEL) IS NOT NULL
+        CONNECT BY REGEXP_SUBSTR(v_exist_clean, '[^ ]+', 1, LEVEL) IS NOT NULL
     )
     SELECT LISTAGG(token, ' ') WITHIN GROUP (ORDER BY token)
-    INTO vexistsorted
+    INTO v_exist_sorted
     FROM exist_tokens;
 
     WITH input_tokens AS (
-        SELECT DISTINCT REGEXPSUBSTR(vinput_clean, '[^ ]+', 1, LEVEL) AS token
+        SELECT DISTINCT REGEXP_SUBSTR(v_input_clean, '[^ ]+', 1, LEVEL) AS token
         FROM dual
-        CONNECT BY REGEXPSUBSTR(vinput_clean, '[^ ]+', 1, LEVEL) IS NOT NULL
+        CONNECT BY REGEXP_SUBSTR(v_input_clean, '[^ ]+', 1, LEVEL) IS NOT NULL
     )
     SELECT LISTAGG(token, ' ') WITHIN GROUP (ORDER BY token)
-    INTO vinputsorted
+    INTO v_input_sorted
     FROM input_tokens;
 
     -- 정렬과 상관없이 동일한 토큰 집합인지 확인
-    IF vexistsorted = vinputsorted THEN
+    IF v_exist_sorted = v_input_sorted THEN
         -- 최종 문자열이 동일하지만 원본 입력이 다르면 99 처리
-        IF UPPER(pexist) <> UPPER(pinput) THEN
+        IF UPPER(p_exist) <> UPPER(p_input) THEN
             v_similarity := 99;
         ELSE
             v_similarity := 100;
@@ -54,25 +54,22 @@ BEGIN
     ELSE
         -- 문자열 유사도 계산 (공통 문자 비율)
         DECLARE
-            vexistlen   NUMBER := LENGTH(REPLACE(vexistsorted, ' ', ''));
-            vinputlen   NUMBER := LENGTH(REPLACE(vinputsorted, ' ', ''));
-            vcommonlen  NUMBER := 0;
+            v_exist_len   NUMBER := LENGTH(REPLACE(v_exist_sorted, ' ', ''));
+            v_input_len   NUMBER := LENGTH(REPLACE(v_input_sorted, ' ', ''));
+            v_common_len  NUMBER := 0;
         BEGIN
             -- 공통 문자 수 계산
-            FOR i IN 1 .. LENGTH(REPLACE(vexistsorted, ' ', '')) LOOP
-                IF INSTR(REPLACE(vinputsorted, ' ', ''), SUBSTR(REPLACE(vexistsorted, ' ', ''), i, 1)) > 0 THEN
-                    vcommonlen := vcommonlen + 1;
+            FOR i IN 1 .. LENGTH(REPLACE(v_exist_sorted, ' ', '')) LOOP
+                IF INSTR(REPLACE(v_input_sorted, ' ', ''), SUBSTR(REPLACE(v_exist_sorted, ' ', ''), i, 1)) > 0 THEN
+                    v_common_len := v_common_len + 1;
                 END IF;
             END LOOP;
 
             -- 공통 문자 비율 = (공통문자 * 2) / (문자수 합계)
-            vsimilarity := ROUND((vcommonlen  2) / (vexistlen + vinput_len)  100);
+            v_similarity := ROUND((v_common_len * 2) / (v_exist_len + v_input_len) * 100);
         END;
     END IF;
 
     RETURN v_similarity;
 END;
 /
-
-
-이 버전부터 다시 얘기하자
