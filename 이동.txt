@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CSS 클래스 아이콘 프로세스</title>
+    <title>26px 아이콘 프로세스 단계</title>
     <style>
         body {
             font-family: 'Pretendard', sans-serif;
@@ -13,21 +13,20 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 60px;
         }
 
         .process-wrapper {
             width: 100%;
-            max-width: 650px;
+            max-width: 500px; /* 아이콘이 작으므로 전체 너비도 약간 조정 */
             background: #fff;
-            padding: 60px 30px 80px 30px;
-            border-radius: 15px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+            padding: 40px 20px 60px 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
         }
 
         .process-list {
             display: flex;
-            align-items: flex-start; /* 아이콘 상단 기준 정렬 */
+            align-items: flex-start;
             list-style: none;
             padding: 0;
             margin: 0;
@@ -40,13 +39,13 @@
             flex-direction: column;
             align-items: center;
             flex-shrink: 0;
-            width: 70px; /* 텍스트 너비 고려 */
+            width: 60px; /* 아이콘이 작아졌으므로 너비 최적화 */
         }
 
-        /* 아이콘 공통 클래스 (CSS로 이미지 처리) */
+        /* 아이콘 공통 클래스 (26px 설정) */
         .ico-img {
-            width: 50px;
-            height: 50px;
+            width: 26px;
+            height: 26px;
             background-size: contain;
             background-repeat: no-repeat;
             background-position: center;
@@ -54,7 +53,7 @@
             z-index: 2;
         }
 
-        /* 각 단계별 이미지 클래스 분리 */
+        /* 각 단계별 이미지 (샘플 이미지) */
         .ico-step1 { background-image: url('https://cdn-icons-png.flaticon.com/512/190/190411.png'); }
         .ico-step2 { background-image: url('https://cdn-icons-png.flaticon.com/512/1149/1149168.png'); }
         .ico-step3 { background-image: url('https://cdn-icons-png.flaticon.com/512/483/483361.png'); }
@@ -62,44 +61,45 @@
 
         /* 상태 텍스트 */
         .txt {
-            margin-top: 12px;
-            font-size: 14px;
+            margin-top: 10px;
+            font-size: 13px;
             color: #333;
             font-weight: 600;
             text-align: center;
             white-space: nowrap;
         }
 
-        /* 연결 라인 (중앙 정렬 공식 적용) */
+        /* 연결 라인 (중앙 정렬 공식) */
         .line {
             flex: 1;
             height: 2px;
             background-color: #3498db;
-            /* 아이콘 높이(50px)의 절반인 25px 위치에 선 배치 */
-            margin-top: 24px; 
-            margin-left: -10px;
-            margin-right: -10px;
+            /* 이미지 높이 26px의 절반인 13px 위치가 중앙입니다.
+               선 두께가 2px이므로 margin-top을 12px 주면 정확히 중앙에 배치됩니다.
+            */
+            margin-top: 12px; 
+            margin-left: -5px;
+            margin-right: -5px;
             z-index: 1;
         }
 
-        /* 비활성화 상태 (off 클래스 하나로 통합 제어) */
+        /* 비활성화 상태 */
         .off .ico-img {
             filter: grayscale(1);
-            opacity: 0.5;
+            opacity: 0.4;
         }
         .off .txt {
-            color: #aaa;
+            color: #bbb;
             font-weight: 400;
         }
         .line.off {
-            background-color: #e0e0e0;
+            background-color: #eee;
         }
 
-        @media (max-width: 480px) {
-            .ico-img { width: 40px; height: 40px; }
-            .line { margin-top: 19px; }
-            .txt { font-size: 12px; }
-            .step { width: 55px; }
+        /* 모바일 대응 */
+        @media (max-width: 380px) {
+            .step { width: 50px; }
+            .txt { font-size: 11px; }
         }
     </style>
 </head>
@@ -110,7 +110,7 @@
             <!-- 1단계 -->
             <li class="step">
                 <div class="ico-img ico-step1"></div>
-                <span class="txt">접수완료</span>
+                <span class="txt">신청</span>
             </li>
             
             <li class="line"></li>
@@ -118,23 +118,23 @@
             <!-- 2단계 -->
             <li class="step">
                 <div class="ico-img ico-step2"></div>
-                <span class="txt">검토중</span>
+                <span class="txt">검토</span>
             </li>
 
             <li class="line off"></li>
 
-            <!-- 3단계 (off 적용) -->
+            <!-- 3단계 -->
             <li class="step off">
                 <div class="ico-img ico-step3"></div>
-                <span class="txt">발송대기</span>
+                <span class="txt">승인</span>
             </li>
 
             <li class="line off"></li>
 
-            <!-- 4단계 (off 적용) -->
+            <!-- 4단계 -->
             <li class="step off">
                 <div class="ico-img ico-step4"></div>
-                <span class="txt">배송완료</span>
+                <span class="txt">완료</span>
             </li>
         </ul>
     </div>
