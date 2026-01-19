@@ -1,110 +1,163 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>가변 단계 프로세스 미리보기</title>
     <style>
-        /* 컨테이너: 전체 너비 설정 */
-        .process-wrapper {
+        body {
+            font-family: 'Pretendard', sans-serif;
+            background-color: #f0f2f5;
+            padding: 40px 20px;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 50px; /* 샘플 사이 간격 */
+            align-items: center;
+        }
+
+        .sample-section {
             width: 100%;
             max-width: 600px;
-            margin: 50px auto;
-            padding: 20px;
+            background: white;
+            padding: 40px 30px 60px 30px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+        }
+
+        h3 {
+            margin-top: 0;
+            margin-bottom: 30px;
+            color: #666;
+            font-size: 16px;
+            text-align: center;
         }
 
         .process-list {
             display: flex;
             align-items: center;
-            justify-content: bween;
             list-style: none;
             padding: 0;
             margin: 0;
+            width: 100%;
         }
 
-        /* 각 단계(아이콘+텍스트) 세트 */
+        /* 각 단계 세트 */
         .step {
             display: flex;
             flex-direction: column;
             align-items: center;
             position: relative;
-            z-index: 1;
+            flex-shrink: 0; /* 아이콘 크기 고정 */
         }
 
-        /* 아이콘 디자인 */
+        /* 아이콘 */
         .ico {
-            width: 40px;
-            height: 40px;
+            width: 44px;
+            height: 44px;
             border-radius: 50%;
-            background-color: #3498db; /* 활성화 색상 */
+            background-color: #3498db;
             color: white;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 14px;
             font-weight: bold;
+            font-size: 15px;
             border: 4px solid #fff;
             box-shadow: 0 0 0 2px #3498db;
+            z-index: 2;
         }
 
-        /* 아이콘 아래 상태 텍스트 */
+        /* 상태 텍스트 */
         .txt {
-            margin-top: 12px;
+            position: absolute;
+            top: 55px; /* 아이콘 아래 적당한 위치 */
             font-size: 13px;
             color: #333;
-            font-weight: 500;
+            font-weight: 600;
             white-space: nowrap;
         }
 
-        /* 연결 라인 */
+        /* 연결 라인: flex: 1로 설정하여 가변적으로 대응 */
         .line {
             flex: 1;
             height: 2px;
             background-color: #3498db;
-            margin-bottom: 28px; /* 텍스트 높이를 고려하여 라인 위치 조정 */
+            margin: 0 -2px; /* 아이콘 테두리와 자연스럽게 겹치도록 함 */
+            transform: translateY(-10px); /* 아이콘 중앙 높이에 맞춤 (텍스트 높이 고려) */
+            z-index: 1;
         }
 
-        /* 비활성화 상태 (예시: 마지막 단계) */
+        /* 비활성화 상태 스타일 */
         .step.off .ico {
-            background-color: #ccc;
-            box-shadow: 0 0 0 2px #ccc;
+            background-color: #e0e0e0;
+            box-shadow: 0 0 0 2px #e0e0e0;
         }
         .step.off .txt {
-            color: #999;
+            color: #aaa;
+            font-weight: 400;
         }
         .line.off {
-            background-color: #ccc;
+            background-color: #e0e0e0;
+        }
+
+        /* 모바일 대응 */
+        @media (max-width: 480px) {
+            .ico { width: 36px; height: 36px; font-size: 13px; }
+            .txt { font-size: 11px; top: 45px; }
+            .line { transform: translateY(-8px); }
         }
     </style>
 </head>
 <body>
 
-<div class="process-wrapper">
-    <ul class="process-list">
-        <li class="step">
-            <div class="ico">1</div>
-            <span class="txt">접수완료</span>
-        </li>
+    <!-- 4단계 예시 -->
+    <div class="sample-section">
+        <h3>[4단계 예시]</h3>
+        <ul class="process-list">
+            <li class="step">
+                <div class="ico">1</div>
+                <span class="txt">신청접수</span>
+            </li>
+            <li class="line"></li>
+            <li class="step">
+                <div class="ico">2</div>
+                <span class="txt">서류검토</span>
+            </li>
+            <li class="line off"></li>
+            <li class="step off">
+                <div class="ico">3</div>
+                <span class="txt">결과대기</span>
+            </li>
+            <li class="line off"></li>
+            <li class="step off">
+                <div class="ico">4</div>
+                <span class="txt">완료</span>
+            </li>
+        </ul>
+    </div>
 
-        <li class="line"></li>
-
-        <li class="step">
-            <div class="ico">2</div>
-            <span class="txt">검토중</span>
-        </li>
-
-        <li class="line off"></li>
-
-        <li class="step off">
-            <div class="ico">3</div>
-            <span class="txt">발송대기</span>
-        </li>
-
-        <li class="line off"></li>
-
-        <li class="step off">
-            <div class="ico">4</div>
-            <span class="txt">배송완료</span>
-        </li>
-    </ul>
-</div>
+    <!-- 3단계 예시 -->
+    <div class="sample-section">
+        <h3>[3단계 예시]</h3>
+        <ul class="process-list">
+            <li class="step">
+                <div class="ico">1</div>
+                <span class="txt">주문완료</span>
+            </li>
+            <li class="line"></li>
+            <li class="step">
+                <div class="ico">2</div>
+                <span class="txt">배송중</span>
+            </li>
+            <li class="line off"></li>
+            <li class="step off">
+                <div class="ico">3</div>
+                <span class="txt">배송완료</span>
+            </li>
+        </ul>
+    </div>
 
 </body>
 </html>
+
