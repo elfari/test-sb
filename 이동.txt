@@ -1,11 +1,110 @@
-// 배열 안의 객체를 REQ_NO로 매칭해서 특정 필드만 업데이트
-arrData.forEach(function(item) {
-  var valid = validData.find(function(v) {
-    return v.REQ_NO === item.REQ_NO;
-  });
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <style>
+        /* 컨테이너: 전체 너비 설정 */
+        .process-wrapper {
+            width: 100%;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+        }
 
-  if (valid) {
-    item.SIM_RSN_CD = valid.SIM_RSN_CD;
-    item.SIM_RSN_DTL = valid.SIM_RSN_DTL;
-  }
-});
+        .process-list {
+            display: flex;
+            align-items: center;
+            justify-content: bween;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        /* 각 단계(아이콘+텍스트) 세트 */
+        .step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* 아이콘 디자인 */
+        .ico {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background-color: #3498db; /* 활성화 색상 */
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+            border: 4px solid #fff;
+            box-shadow: 0 0 0 2px #3498db;
+        }
+
+        /* 아이콘 아래 상태 텍스트 */
+        .txt {
+            margin-top: 12px;
+            font-size: 13px;
+            color: #333;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+
+        /* 연결 라인 */
+        .line {
+            flex: 1;
+            height: 2px;
+            background-color: #3498db;
+            margin-bottom: 28px; /* 텍스트 높이를 고려하여 라인 위치 조정 */
+        }
+
+        /* 비활성화 상태 (예시: 마지막 단계) */
+        .step.off .ico {
+            background-color: #ccc;
+            box-shadow: 0 0 0 2px #ccc;
+        }
+        .step.off .txt {
+            color: #999;
+        }
+        .line.off {
+            background-color: #ccc;
+        }
+    </style>
+</head>
+<body>
+
+<div class="process-wrapper">
+    <ul class="process-list">
+        <li class="step">
+            <div class="ico">1</div>
+            <span class="txt">접수완료</span>
+        </li>
+
+        <li class="line"></li>
+
+        <li class="step">
+            <div class="ico">2</div>
+            <span class="txt">검토중</span>
+        </li>
+
+        <li class="line off"></li>
+
+        <li class="step off">
+            <div class="ico">3</div>
+            <span class="txt">발송대기</span>
+        </li>
+
+        <li class="line off"></li>
+
+        <li class="step off">
+            <div class="ico">4</div>
+            <span class="txt">배송완료</span>
+        </li>
+    </ul>
+</div>
+
+</body>
+</html>
