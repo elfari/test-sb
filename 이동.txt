@@ -3,27 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>26px 아이콘 프로세스 단계</title>
+    <title>데이터 유무에 따른 프로세스 화면</title>
     <style>
         body {
-            font-family: 'Pretendard', sans-serif;
-            background-color: #f8f9fa;
-            padding: 50px 20px;
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+            background-color: #f0f2f5;
+            padding: 40px 20px;
             margin: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
+            gap: 40px;
         }
 
+        /* 공통 컨테이너 */
         .process-wrapper {
             width: 100%;
-            max-width: 500px; /* 아이콘이 작으므로 전체 너비도 약간 조정 */
+            max-width: 500px;
             background: #fff;
-            padding: 40px 20px 60px 20px;
+            padding: 40px 20px;
             border-radius: 12px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            min-height: 120px; /* 일관된 높이 유지 */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
         }
 
+        .title-label {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 30px;
+            font-weight: 500;
+        }
+
+        /* 프로세스 리스트 스타일 */
         .process-list {
             display: flex;
             align-items: flex-start;
@@ -33,16 +47,15 @@
             width: 100%;
         }
 
-        /* 각 단계 세트 */
         .step {
             display: flex;
             flex-direction: column;
             align-items: center;
             flex-shrink: 0;
-            width: 60px; /* 아이콘이 작아졌으므로 너비 최적화 */
+            width: 60px;
         }
 
-        /* 아이콘 공통 클래스 (26px 설정) */
+        /* 26px 아이콘 설정 */
         .ico-img {
             width: 26px;
             height: 26px;
@@ -53,13 +66,11 @@
             z-index: 2;
         }
 
-        /* 각 단계별 이미지 (샘플 이미지) */
+        /* 아이콘 이미지 클래스 */
         .ico-step1 { background-image: url('https://cdn-icons-png.flaticon.com/512/190/190411.png'); }
         .ico-step2 { background-image: url('https://cdn-icons-png.flaticon.com/512/1149/1149168.png'); }
-        .ico-step3 { background-image: url('https://cdn-icons-png.flaticon.com/512/483/483361.png'); }
-        .ico-step4 { background-image: url('https://cdn-icons-png.flaticon.com/512/709/709790.png'); }
+        .ico-step3 { background-image: url('https://cdn-icons-png.flaticon.com/512/709/709790.png'); }
 
-        /* 상태 텍스트 */
         .txt {
             margin-top: 10px;
             font-size: 13px;
@@ -69,35 +80,51 @@
             white-space: nowrap;
         }
 
-        /* 연결 라인 (중앙 정렬 공식) */
         .line {
             flex: 1;
             height: 2px;
             background-color: #3498db;
-            /* 이미지 높이 26px의 절반인 13px 위치가 중앙입니다.
-               선 두께가 2px이므로 margin-top을 12px 주면 정확히 중앙에 배치됩니다.
-            */
-            margin-top: 12px; 
+            margin-top: 12px; /* 26px 중앙 정렬 */
             margin-left: -5px;
             margin-right: -5px;
             z-index: 1;
         }
 
-        /* 비활성화 상태 */
-        .off .ico-img {
-            filter: grayscale(1);
-            opacity: 0.4;
-        }
-        .off .txt {
-            color: #bbb;
-            font-weight: 400;
-        }
-        .line.off {
-            background-color: #eee;
+        .line.off { background-color: #eee; }
+        .step.off .ico-img { filter: grayscale(1); opacity: 0.4; }
+        .step.off .txt { color: #bbb; font-weight: 400; }
+
+        /* 데이터가 없을 경우 (No Data) 스타일 */
+        .no-data {
+            text-align: center;
+            padding: 20px 0;
         }
 
-        /* 모바일 대응 */
-        @media (max-width: 380px) {
+        .no-data-text {
+            color: #999;
+            font-size: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* 데이터 없음 아이콘 (선택 사항) */
+        .no-data-text::before {
+            content: '!';
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background-color: #eee;
+            color: #ccc;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        @media (max-width: 400px) {
             .step { width: 50px; }
             .txt { font-size: 11px; }
         }
@@ -105,38 +132,35 @@
 </head>
 <body>
 
+    <!-- 데이터가 있는 경우 -->
     <div class="process-wrapper">
+        <div class="title-label">데이터가 있는 경우</div>
         <ul class="process-list">
-            <!-- 1단계 -->
             <li class="step">
                 <div class="ico-img ico-step1"></div>
                 <span class="txt">신청</span>
             </li>
-            
             <li class="line"></li>
-
-            <!-- 2단계 -->
             <li class="step">
                 <div class="ico-img ico-step2"></div>
-                <span class="txt">검토</span>
+                <span class="txt">진행</span>
             </li>
-
             <li class="line off"></li>
-
-            <!-- 3단계 -->
             <li class="step off">
                 <div class="ico-img ico-step3"></div>
-                <span class="txt">승인</span>
-            </li>
-
-            <li class="line off"></li>
-
-            <!-- 4단계 -->
-            <li class="step off">
-                <div class="ico-img ico-step4"></div>
                 <span class="txt">완료</span>
             </li>
         </ul>
+    </div>
+
+    <!-- 데이터가 없는 경우 -->
+    <div class="process-wrapper">
+        <div class="title-label">데이터가 없는 경우</div>
+        <div class="no-data">
+            <div class="no-data-text">
+                데이터가 존재하지 않습니다
+            </div>
+        </div>
     </div>
 
 </body>
