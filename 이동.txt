@@ -1,34 +1,72 @@
-CREATE OR REPLACE FUNCTION FN_GET_STR_SIMILARITY(
+CREATE OR REPLACE FUNCTION FN_GET_SIMILARITY_FINAL(
     P_STR1 IN VARCHAR2,
     P_STR2 IN VARCHAR2
 ) RETURN NUMBER
 IS
-    V_LEN1    NUMBER;
-    V_LEN2    NUMBER;
-    V_DIST    NUMBER; -- 편집 거리 (두 문자열이 얼마나 다른지)
-    V_MATCH   NUMBER; -- 일치하는 문자 수 (추정)
-    V_RESULT  NUMBER;
+    /*
+      [함수 설명]
+      1. 입력된 문자열에서 모든 공백을 제거
+      2. 글자 순서를 오름차순으로 정렬
+      3. 편집 거리 알고리즘을 통해 유사도(%) 반환
+    */
+
+    V_PURE_STR1 VARCHAR2(4000); -- 공백 제거된 문자열1
+    V_PURE_STR2 VARCHAR2(4000); -- 공백 제거된 문자열2
+    
+    V_SORTED1   VARCHAR2(4000); -- 정렬된 문자열1
+    V_SORTED2   VARCHAR2(4000); -- 정렬된 문자열2
+    
+    V_LEN1      NUMBER;
+    V_LEN2      NUMBER;
+    V_DIST      NUMBER;
+    V_MATCH     NUMBER;
+    V_RESULT    NUMBER;
 BEGIN
-    -- 1. NULL 처리 및 동일 문자열 처리
-    IF P_STR1 IS NULL OR P_STR2 IS NULL THEN RETURN 0; END IF;
-    IF P_STR1 = P_STR2 THEN RETURN 100; END IF;
+    -- 1. NULL 체크
+    IF P_STR1 IS NULL OR P_STR2 IS NULL THEN 
+        RETURN 0; 
+    END IF;
 
-    -- 2. 길이 계산
-    V_LEN1 := LENGTH(P_STR1);
-    V_LEN2 := LENGTH(P_STR2);
+    -- 2. 공백 제거 (Space 제거)
+    -- '다리 보호 1' -> '다리보호1'
+    V_PURE_STR1 := REPLACE(P_STR1, ' ', '');
+    V_PURE_STR2 := REPLACE(P_STR2, ' ', '');
+
+    -- 공백 제거 후 내용이 없으면 0 반환 (예: '   ')
+    IF V_PURE_STR1 IS NULL OR V_PURE_STR2 IS NULL THEN
+        RETURN 0;
+    END IF;
+
+    -- 3. 정렬 (Sorting)
+    -- 공백이 제거된 V_PURE_STR 변수를 사용
+    BEGIN
+        SELECT LISTAGG(C, '') WITHIN GROUP (ORDER BY C)
+          INTO V_SORTED1
+          FROM (SELECT SUBSTR(V_PURE_STR1, LEVEL, 1) C 
+                  FROM DUAL 
+                CONNECT BY LEVEL <= LENGTH(V_PURE_STR1));
+                
+        SELECT LISTAGG(C, '') WITHIN GROUP (ORDER BY C)
+          INTO V_SORTED2
+          FROM (SELECT SUBSTR(V_PURE_STR2, LEVEL, 1) C 
+                  FROM DUAL 
+                CONNECT BY LEVEL <= LENGTH(V_PURE_STR2));
+    EXCEPTION
+        WHEN OTHERS THEN
+            RETURN 0;
+    END;
+
+    -- 4. 길이 계산
+    V_LEN1 := LENGTH(V_SORTED1);
+    V_LEN2 := LENGTH(V_SORTED2);
     
-    -- 3. 편집 거리 계산 (Levenshtein Distance)
-    -- 두 문자열을 같게 만들기 위해 수정/삭제/삽입해야 하는 최소 횟수
-    V_DIST := UTL_MATCH.EDIT_DISTANCE(P_STR1, P_STR2);
-    
-    -- 4. 일치하는 문자 수 역산 (질문자의 논리 적용)
-    -- 가장 긴 문자열 길이에서 '다른 부분(Distance)'을 빼면 '같은 부분'이 남음
+    IF (V_LEN1 + V_LEN2) = 0 THEN RETURN 0; END IF;
+
+    -- 5. 편집 거리 및 유사도 계산
+    V_DIST := UTL_MATCH.EDIT_DISTANCE(V_SORTED1, V_SORTED2);
     V_MATCH := GREATEST(V_LEN1, V_LEN2) - V_DIST;
-
-    -- 5. 유사도 공식 적용: (2 * 일치수) / (전체 길이 합) * 100
-    -- 예: (2 * 5) / (10 + 5) * 100 = 66.66...
     V_RESULT := (2 * V_MATCH) / (V_LEN1 + V_LEN2) * 100;
 
-    RETURN ROUND(V_RESULT, 2); -- 소수점 2자리 반올림
+    RETURN ROUND(V_RESULT, 2);
 END;
 /
