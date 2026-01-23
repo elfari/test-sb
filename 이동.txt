@@ -70,3 +70,322 @@ BEGIN
     RETURN ROUND(V_RESULT, 2);
 END;
 /
+
+
+
+
+
+
+CREATE OR REPLACE FUNCTION FN_GET_SIM_PCT(
+    P_STR1 IN VARCHAR2,
+    P_STR2 IN VARCHAR2
+) RETURN NUMBER
+IS
+    /*
+      [수정 사항]
+      ORA-06502 오류 해결을 위해 변수 사이즈 확장
+      1. V_CHAR: VARCHAR2(1) -> VARCHAR2(10) (한글 3바이트 문제 해결)
+      2. V_STR 변수들: VARCHAR2(4000) -> VARCHAR2(32767) (PL/SQL 최대치 활용)
+    */
+
+    V_STR1      VARCHAR2(4000); -- 4000 -> 32767로 변경
+    V_STR2      VARCHAR2(4000);
+    
+    V_LEN1      NUMBER;
+    V_LEN2      NUMBER;
+    
+    V_CHAR      VARCHAR2(10);    -- 1 -> 10으로 변경 (한글 깨짐 방지)
+    V_POS       NUMBER;
+    V_MATCH_CNT NUMBER := 0;
+    V_RESULT    NUMBER;
+    
+    V_ORG_STR1  VARCHAR2(32767);
+    V_ORG_STR2  VARCHAR2(32767);
+BEGIN
+    -- 1. NULL 및 빈값 체크
+    IF P_STR1 IS NULL OR P_STR2 IS NULL THEN RETURN 0; END IF;
+    
+    -- 2. 공백 제거
+    V_STR1 := REPLACE(P_STR1, ' ', '');
+    V_STR2 := REPLACE(P_STR2, ' ', '');
+    
+    V_ORG_STR1 := V_STR1;
+    V_ORG_STR2 := V_STR2;
+
+    IF V_STR1 IS NULL OR V_STR2 IS NULL THEN RETURN 0; END IF;
+    IF V_STR1 = V_STR2 THEN RETURN 100; END IF; 
+
+    -- 3. 길이 계산
+    V_LEN1 := LENGTH(V_STR1);
+    V_LEN2 := LENGTH(V_STR2);
+
+    -- 4. 글자 하나씩 직접 비교
+    FOR i IN 1..V_LEN1 LOOP
+        -- 한 글자 추출
+        V_CHAR := SUBSTR(V_STR1, i, 1);
+        
+        -- V_STR2에 해당 글자가 있는 위치 찾기
+        V_POS := INSTR(V_STR2, V_CHAR);
+        
+        IF V_POS > 0 THEN
+            -- 찾았으면 카운트 증가
+            V_MATCH_CNT := V_MATCH_CNT + 1;
+            
+            -- [중요] 찾은 글자는 V_STR2에서 제거 (중복 매칭 방지)
+            -- SUBSTR로 쪼개서 다시 합칠 때 버퍼 오류가 나지 않도록 변수 크기를 키웠습니다.
+            V_STR2 := SUBSTR(V_STR2, 1, V_POS - 1) || SUBSTR(V_STR2, V_POS + 1);
+        END IF;
+    END LOOP;
+
+    -- 5. 결과 계산
+    V_RESULT := (2 * V_MATCH_CNT) / (V_LEN1 + V_LEN2) * 100;
+
+    -- 6. [순서 보정] 점수는 100점인데 원본 문자열이 다르면 99점
+    IF V_RESULT = 100 AND V_ORG_STR1 != V_ORG_STR2 THEN
+        RETURN 99;
+    END IF;
+
+    RETURN ROUND(V_RESULT, 2);
+END;
+
+
+
+
+
+
+
+
+CREATE OR REPLACE FUNCTION FN_GET_SIM_PCT(
+    P_STR1 IN VARCHAR2,
+    P_STR2 IN VARCHAR2
+) RETURN NUMBER
+IS
+    /* [로직 구성]
+       Step 1. 전처리: 특수문자 제거 + 토큰 중복 제거 (New!)
+       Step 2. 공백 제거
+       Step 3. 글자 단위 직접 비교 (Direct Counting)
+       Step 4. 결과 도출 및 순서 보정 (99점 룰)
+    */
+
+    -- 변수 선언 (넉넉한 사이즈)
+    V_PROC_STR1 VARCHAR2(32767); -- 전처리 완료된 문자열 1
+    V_PROC_STR2 VARCHAR2(32767); -- 전처리 완료된 문자열 2
+    
+    V_FINAL_STR1 VARCHAR2(32767); -- 공백까지 제거된 최종 비교용 1
+    V_FINAL_STR2 VARCHAR2(32767); -- 공백까지 제거된 최종 비교용 2
+    
+    V_LEN1       NUMBER;
+    V_LEN2       NUMBER;
+    V_MATCH_CNT  NUMBER := 0;
+    V_CHAR       VARCHAR2(10);
+    V_POS        NUMBER;
+    V_RESULT     NUMBER;
+
+    ---------------------------------------------------
+    -- [내부 함수] 전처리 로직 (특수문자->공백, 중복토큰 제거)
+    ---------------------------------------------------
+    FUNCTION FN_PREPROCESS(P_VAL IN VARCHAR2) RETURN VARCHAR2
+    IS
+        V_CLEANED    VARCHAR2(32767);
+        V_TOKEN      VARCHAR2(4000);
+        V_RESULT_STR VARCHAR2(32767) := '';
+        
+        -- 중복 체크를 위한 Map (Key: 토큰, Value: 존재여부)
+        TYPE T_TOKEN_MAP IS TABLE OF BOOLEAN INDEX BY VARCHAR2(4000);
+        V_MAP T_TOKEN_MAP;
+        
+        V_IDX        NUMBER := 1;
+    BEGIN
+        IF P_VAL IS NULL THEN RETURN NULL; END IF;
+        
+        -- 1. 허용 문자(영/한/중/숫) 외에는 공백으로 치환
+        -- [^...] : 부정형, 즉 저 안에 없는 건 다 공백 처리
+        V_CLEANED := REGEXP_REPLACE(P_VAL, '[^a-zA-Z0-9가-힣一-龥]', ' ');
+        
+        -- 2. 토큰화 및 중복 제거 루프
+        -- 정규식으로 공백이 아닌 단어들을 하나씩 추출
+        LOOP
+            V_TOKEN := REGEXP_SUBSTR(V_CLEANED, '[^ ]+', 1, V_IDX);
+            EXIT WHEN V_TOKEN IS NULL;
+            
+            -- Map에 없는 토큰만 추가
+            IF NOT V_MAP.EXISTS(V_TOKEN) THEN
+                V_MAP(V_TOKEN) := TRUE;
+                V_RESULT_STR := V_RESULT_STR || V_TOKEN; -- 공백 없이 합칠지, 띄울지 결정 (여기선 띄어쓰기 없이 합침 or 구분자)
+                -- *질문 의도상 나중에 어차피 공백 제거하므로, 여기선 구분자 공백을 넣어 가독성 유지 후 합침
+                V_RESULT_STR := V_RESULT_STR || V_TOKEN || ' '; 
+            END IF;
+            
+            V_IDX := V_IDX + 1;
+        END LOOP;
+        
+        RETURN TRIM(V_RESULT_STR);
+    END;
+    ---------------------------------------------------
+
+BEGIN
+    -- 1. NULL 체크
+    IF P_STR1 IS NULL OR P_STR2 IS NULL THEN RETURN 0; END IF;
+
+    -- 2. [New Step] 전처리 수행 (특수문자 제거 + 중복토큰 제거)
+    V_PROC_STR1 := FN_PREPROCESS(P_STR1);
+    V_PROC_STR2 := FN_PREPROCESS(P_STR2);
+
+    -- 전처리 후 내용이 없으면 0 반환
+    IF V_PROC_STR1 IS NULL OR V_PROC_STR2 IS NULL THEN RETURN 0; END IF;
+
+    -- 3. [Existing Step] 공백 제거 (글자 단위 비교를 위해)
+    V_FINAL_STR1 := REPLACE(V_PROC_STR1, ' ', '');
+    V_FINAL_STR2 := REPLACE(V_PROC_STR2, ' ', '');
+    
+    -- 완전 일치 시 (중복제거 후 결과가 같으면)
+    IF V_FINAL_STR1 = V_FINAL_STR2 THEN RETURN 100; END IF;
+
+    -- 4. 길이 계산
+    V_LEN1 := LENGTH(V_FINAL_STR1);
+    V_LEN2 := LENGTH(V_FINAL_STR2);
+    
+    IF (V_LEN1 + V_LEN2) = 0 THEN RETURN 0; END IF;
+
+    -- 5. 글자 하나씩 직접 비교 (Direct Counting)
+    FOR i IN 1..V_LEN1 LOOP
+        V_CHAR := SUBSTR(V_FINAL_STR1, i, 1);
+        V_POS := INSTR(V_FINAL_STR2, V_CHAR);
+        
+        IF V_POS > 0 THEN
+            V_MATCH_CNT := V_MATCH_CNT + 1;
+            -- 중복 매칭 방지: 찾은 글자 제거
+            V_FINAL_STR2 := SUBSTR(V_FINAL_STR2, 1, V_POS - 1) || SUBSTR(V_FINAL_STR2, V_POS + 1);
+        END IF;
+    END LOOP;
+
+    -- 6. 결과 계산
+    V_RESULT := (2 * V_MATCH_CNT) / (V_LEN1 + V_LEN2) * 100;
+
+    -- 7. [순서 보정] 구성요소(100점)는 같으나 순서가 다르면 99점
+    -- (단, 전처리된 상태 기준)
+    IF V_RESULT = 100 AND REPLACE(V_PROC_STR1,' ','') != REPLACE(V_PROC_STR2,' ','') THEN
+        RETURN 99;
+    END IF;
+
+    RETURN ROUND(V_RESULT, 2);
+END;
+
+
+
+
+
+
+
+
+
+CREATE OR REPLACE FUNCTION FN_GET_SIM_PCT(
+    P_STR1 IN VARCHAR2,
+    P_STR2 IN VARCHAR2
+) RETURN NUMBER
+IS
+    /* [최종 정책]
+      1. 원본 완전 일치 -> 100점
+      2. 전처리(특수문자/중복 제거) 후 일치 -> 99점
+      3. 순서만 다름 -> 99점 (계산상 100 나오지만 원본 다르므로)
+      4. 그 외 -> (2 * 일치글자수) / 전체길이
+    */
+
+    V_PROC_STR1  VARCHAR2(32767);
+    V_PROC_STR2  VARCHAR2(32767);
+    V_FINAL_STR1 VARCHAR2(32767);
+    V_FINAL_STR2 VARCHAR2(32767);
+    
+    V_LEN1       NUMBER;
+    V_LEN2       NUMBER;
+    V_MATCH_CNT  NUMBER := 0;
+    V_CHAR       VARCHAR2(10);
+    V_POS        NUMBER;
+    V_RESULT     NUMBER;
+
+    -- [내부 함수] 전처리: 특수문자 제거 & 토큰 중복 제거
+    FUNCTION FN_PREPROCESS(P_VAL IN VARCHAR2) RETURN VARCHAR2
+    IS
+        V_CLEANED    VARCHAR2(32767);
+        V_TOKEN      VARCHAR2(4000);
+        V_RESULT_STR VARCHAR2(32767) := '';
+        
+        TYPE T_TOKEN_MAP IS TABLE OF BOOLEAN INDEX BY VARCHAR2(4000);
+        V_MAP T_TOKEN_MAP;
+        V_IDX NUMBER := 1;
+    BEGIN
+        IF P_VAL IS NULL THEN RETURN NULL; END IF;
+        -- 허용 문자 외 공백 치환
+        V_CLEANED := REGEXP_REPLACE(P_VAL, '[^a-zA-Z0-9가-힣一-龥]', ' ');
+        
+        LOOP
+            V_TOKEN := REGEXP_SUBSTR(V_CLEANED, '[^ ]+', 1, V_IDX);
+            EXIT WHEN V_TOKEN IS NULL;
+            
+            IF NOT V_MAP.EXISTS(V_TOKEN) THEN
+                V_MAP(V_TOKEN) := TRUE;
+                V_RESULT_STR := V_RESULT_STR || V_TOKEN || ' ';
+            END IF;
+            V_IDX := V_IDX + 1;
+        END LOOP;
+        RETURN TRIM(V_RESULT_STR);
+    END;
+
+BEGIN
+    -- 1. NULL 체크
+    IF P_STR1 IS NULL OR P_STR2 IS NULL THEN RETURN 0; END IF;
+
+    -- [핵심 1] 원본이 완벽하게 같아야만 100점
+    IF P_STR1 = P_STR2 THEN RETURN 100; END IF;
+
+    -- 2. 전처리 수행
+    V_PROC_STR1 := FN_PREPROCESS(P_STR1);
+    V_PROC_STR2 := FN_PREPROCESS(P_STR2);
+
+    IF V_PROC_STR1 IS NULL OR V_PROC_STR2 IS NULL THEN RETURN 0; END IF;
+
+    -- 3. 공백 제거 (글자 단위 비교용)
+    V_FINAL_STR1 := REPLACE(V_PROC_STR1, ' ', '');
+    V_FINAL_STR2 := REPLACE(V_PROC_STR2, ' ', '');
+    
+    -- 4. 길이 계산
+    V_LEN1 := LENGTH(V_FINAL_STR1);
+    V_LEN2 := LENGTH(V_FINAL_STR2);
+    
+    IF (V_LEN1 + V_LEN2) = 0 THEN RETURN 0; END IF;
+
+    -- 5. 글자 단위 직접 매칭 (Direct Counting)
+    FOR i IN 1..V_LEN1 LOOP
+        V_CHAR := SUBSTR(V_FINAL_STR1, i, 1);
+        V_POS := INSTR(V_FINAL_STR2, V_CHAR);
+        
+        IF V_POS > 0 THEN
+            V_MATCH_CNT := V_MATCH_CNT + 1;
+            -- 중복 매칭 방지를 위해 해당 글자 제거
+            V_FINAL_STR2 := SUBSTR(V_FINAL_STR2, 1, V_POS - 1) || SUBSTR(V_FINAL_STR2, V_POS + 1);
+        END IF;
+    END LOOP;
+
+    -- 6. 결과 산출
+    V_RESULT := (2 * V_MATCH_CNT) / (V_LEN1 + V_LEN2) * 100;
+
+    -- [핵심 2] 계산결과가 100점이라도, 원본이 다르면 99점
+    -- (Step 1에서 원본 일치를 이미 걸러냈으므로, 여기 도달한 100점은 무조건 '가공된 100점'임)
+    IF V_RESULT >= 100 THEN
+        RETURN 99;
+    END IF;
+
+    RETURN ROUND(V_RESULT, 2);
+END;
+
+
+
+
+
+
+
+
+
+
+
+
