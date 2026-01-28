@@ -1,97 +1,148 @@
-WITH 
--- [0] 입력 데이터 정의 (여기에 원하시는 문자열을 넣으세요)
-INPUT_DATA AS (
-    SELECT 
-        '5PART PIVOT CHAMFER;5MM-GE01-SD1-L0W6H26.13;' AS S1,
-        'Centrifugal Pump;Flowrate : 2.5 ~ 8.5m_3h, Flowrate : 0.8 ~ 2.7m_3/h;.' AS S2
-    FROM DUAL
+WITH
+/* [0] Input */
+input_data AS (
+    SELECT
+        '5PART PIVOT CHAMFER;5MM-GE01-SD1-L0W6H26.13;' AS s1,
+        'Centrifugal Pump;Flowrate : 2.5 ~ 8.5m_3h, Flowrate : 0.8 ~ 2.7m_3/h;.' AS s2
+    FROM dual
 ),
--- [1] 특수문자 제거 및 대문자 변환 (정규식)
-STEP1_PREP AS (
-    SELECT 
-        S1 AS ORG_S1, S2 AS ORG_S2,
-        REGEXP_REPLACE(UPPER(S1), '[^A-Z0-9가-힣一-龥]', ' ') AS PREP_S1,
-        REGEXP_REPLACE(UPPER(S2), '[^A-Z0-9가-힣一-龥]', ' ') AS PREP_S2
-    FROM INPUT_DATA
+
+/* [1] Normalize (upper + remove special chars -> space) */
+prep AS (
+    SELECT
+        s1 AS org_s1,
+        s2 AS org_s2,
+        REGEXP_REPLACE(UPPER(s1), '[^A-Z0-9가-힣一-龥]', ' ') AS prep_s1,
+        REGEXP_REPLACE(UPPER(s2), '[^A-Z0-9가-힣一-龥]', ' ') AS prep_s2
+    FROM input_data
 ),
--- [2] 토큰(단어) 단위 분리 (Row Generator)
-STEP2_TOKENS AS (
-    -- S1 토큰 분리
-    SELECT 'S1' AS TYPE, TRIM(REGEXP_SUBSTR(PREP_S1, '[^ ]+', 1, LEVEL)) AS TOKEN
-    FROM STEP1_PREP CONNECT BY REGEXP_SUBSTR(PREP_S1, '[^ ]+', 1, LEVEL) IS NOT NULL
+
+/* [2] Tokenize both strings (bounded by REGEXP_COUNT) */
+tokens AS (
+    SELECT
+        'S1' AS typ,
+        TRIM(REGEXP_SUBSTR(p.prep_s1, '[^ ]+', 1, lvl)) AS token
+    FROM prep p
+    CROSS JOIN (
+        SELECT LEVEL AS lvl
+        FROM dual
+        CONNECT BY LEVEL <= REGEXP_COUNT((SELECT prep_s1 FROM prep), '[^ ]+')
+    )
     UNION ALL
-    -- S2 토큰 분리
-    SELECT 'S2' AS TYPE, TRIM(REGEXP_SUBSTR(PREP_S2, '[^ ]+', 1, LEVEL)) AS TOKEN
-    FROM STEP1_PREP CONNECT BY REGEXP_SUBSTR(PREP_S2, '[^ ]+', 1, LEVEL) IS NOT NULL
+    SELECT
+        'S2' AS typ,
+        TRIM(REGEXP_SUBSTR(p.prep_s2, '[^ ]+', 1, lvl)) AS token
+    FROM prep p
+    CROSS JOIN (
+        SELECT LEVEL AS lvl
+        FROM dual
+        CONNECT BY LEVEL <= REGEXP_COUNT((SELECT prep_s2 FROM prep), '[^ ]+')
+    )
 ),
--- [3] 중복 토큰 제거 후 다시 합치기 (LISTAGG)
-STEP3_UNIQUE AS (
-    SELECT 
-        (SELECT LISTAGG(TOKEN, ' ') WITHIN GROUP (ORDER BY TOKEN) 
-         FROM (SELECT DISTINCT TOKEN FROM STEP2_TOKENS WHERE TYPE = 'S1')) AS UNIQ_S1,
-        (SELECT LISTAGG(TOKEN, ' ') WITHIN GROUP (ORDER BY TOKEN) 
-         FROM (SELECT DISTINCT TOKEN FROM STEP2_TOKENS WHERE TYPE = 'S2')) AS UNIQ_S2
-    FROM DUAL
+
+/* [3] Unique tokens -> sorted concat */
+uniq AS (
+    SELECT
+        LISTAGG(DISTINCT CASE WHEN typ='S1' THEN token END, ' ')
+            WITHIN GROUP (ORDER BY CASE WHEN typ='S1' THEN token END) AS uniq_s1,
+        LISTAGG(DISTINCT CASE WHEN typ='S2' THEN token END, ' ')
+            WITHIN GROUP (ORDER BY CASE WHEN typ='S2' THEN token END) AS uniq_s2
+    FROM tokens
 ),
--- [4] 공백 제거 (최종 비교 문자열 생성)
-STEP4_FINAL_STR AS (
-    SELECT 
-        UNIQ_S1, UNIQ_S2,
-        REPLACE(UNIQ_S1, ' ', '') AS FIN_S1,
-        REPLACE(UNIQ_S2, ' ', '') AS FIN_S2
-    FROM STEP3_UNIQUE
+
+/* [4] Final compare strings (remove spaces) */
+final_str AS (
+    SELECT
+        u.uniq_s1,
+        u.uniq_s2,
+        REPLACE(u.uniq_s1, ' ', '') AS fin_s1,
+        REPLACE(u.uniq_s2, ' ', '') AS fin_s2
+    FROM uniq u
 ),
--- [5] 글자 단위 분해 및 빈도수 계산 (Bag of Characters)
-STEP5_CHARS AS (
-    SELECT 'S1' AS TYPE, SUBSTR(FIN_S1, LEVEL, 1) AS CH 
-    FROM STEP4_FINAL_STR CONNECT BY LEVEL <= LENGTH(FIN_S1)
+
+/* [5] Character bag (counts) */
+chars AS (
+    SELECT 'S1' AS typ, SUBSTR(f.fin_s1, LEVEL, 1) AS ch
+    FROM final_str f
+    CONNECT BY LEVEL <= LENGTH(f.fin_s1)
+           AND PRIOR SYS_GUID() IS NOT NULL
+           AND PRIOR fin_s1 = fin_s1
     UNION ALL
-    SELECT 'S2' AS TYPE, SUBSTR(FIN_S2, LEVEL, 1) AS CH 
-    FROM STEP4_FINAL_STR CONNECT BY LEVEL <= LENGTH(FIN_S2)
+    SELECT 'S2' AS typ, SUBSTR(f.fin_s2, LEVEL, 1) AS ch
+    FROM final_str f
+    CONNECT BY LEVEL <= LENGTH(f.fin_s2)
+           AND PRIOR SYS_GUID() IS NOT NULL
+           AND PRIOR fin_s2 = fin_s2
 ),
-CHAR_COUNTS AS (
-    SELECT CH,
-           COUNT(CASE WHEN TYPE='S1' THEN 1 END) AS CNT1,
-           COUNT(CASE WHEN TYPE='S2' THEN 1 END) AS CNT2
-    FROM STEP5_CHARS
-    GROUP BY CH
+
+char_counts AS (
+    SELECT
+        ch,
+        SUM(CASE WHEN typ='S1' THEN 1 ELSE 0 END) AS cnt1,
+        SUM(CASE WHEN typ='S2' THEN 1 ELSE 0 END) AS cnt2
+    FROM chars
+    GROUP BY ch
 ),
--- [6] 최종 통계 산출
-FINAL_CALC AS (
-    SELECT 
-        (SELECT LENGTH(FIN_S1) FROM STEP4_FINAL_STR) AS LEN1,
-        (SELECT LENGTH(FIN_S2) FROM STEP4_FINAL_STR) AS LEN2,
-        -- 교집합 개수: 두 문자열 중 적게 가지고 있는 쪽의 개수를 합산 (MIN 로직)
-        SUM(LEAST(CNT1, CNT2)) AS MATCH_CNT
-    FROM CHAR_COUNTS
+
+calc AS (
+    SELECT
+        LENGTH(f.fin_s1) AS len1,
+        LENGTH(f.fin_s2) AS len2,
+        SUM(LEAST(c.cnt1, c.cnt2)) AS match_cnt,
+        f.fin_s1,
+        f.fin_s2,
+        f.uniq_s1,
+        f.uniq_s2
+    FROM final_str f
+    JOIN char_counts c ON 1=1
+    GROUP BY
+        f.fin_s1, f.fin_s2, f.uniq_s1, f.uniq_s2
 )
--- [7] 결과 출력 (Unpivot 형태로 보기 좋게 정렬)
-SELECT 
-    '1단계. 원본' AS 단계, S1 AS 문자열1, S2 AS 문자열2 FROM INPUT_DATA
+
+/* [6] Output */
+SELECT
+    '1단계. 원본' AS 단계,
+    (SELECT org_s1 FROM prep) AS 문자열1,
+    (SELECT org_s2 FROM prep) AS 문자열2
+FROM dual
 UNION ALL
-SELECT 
-    '2단계. 특수문자제거', PREP_S1, PREP_S2 FROM STEP1_PREP
+SELECT
+    '2단계. 특수문자제거',
+    (SELECT prep_s1 FROM prep),
+    (SELECT prep_s2 FROM prep)
+FROM dual
 UNION ALL
-SELECT 
-    '3단계. 중복단어제거', UNIQ_S1, UNIQ_S2 FROM STEP3_UNIQUE
+SELECT
+    '3단계. 중복단어제거',
+    uniq_s1,
+    uniq_s2
+FROM calc
 UNION ALL
-SELECT 
-    '4단계. 공백제외 문자열', FIN_S1, FIN_S2 FROM STEP4_FINAL_STR
+SELECT
+    '4단계. 공백제외 문자열',
+    fin_s1,
+    fin_s2
+FROM calc
 UNION ALL
-SELECT 
-    '5단계. 공백제외 문자수', TO_CHAR(LEN1), TO_CHAR(LEN2) FROM FINAL_CALC
+SELECT
+    '5단계. 공백제외 문자수',
+    TO_CHAR(len1),
+    TO_CHAR(len2)
+FROM calc
 UNION ALL
-SELECT 
-    '6단계. 일치 문자수', TO_CHAR(MATCH_CNT), TO_CHAR(MATCH_CNT) FROM FINAL_CALC
+SELECT
+    '6단계. 일치 문자수',
+    TO_CHAR(match_cnt),
+    TO_CHAR(match_cnt)
+FROM calc
 UNION ALL
-SELECT 
-    '7단계. 최종 유사도(%)', 
-    TO_CHAR(ROUND((2 * MATCH_CNT) / (LEN1 + LEN2) * 100, 2)) || '%', 
-    CASE 
-        -- 99점 룰 체크: 점수가 100점인데 원본이 다르면 99점 표기
-        WHEN (2 * MATCH_CNT) / (LEN1 + LEN2) * 100 >= 100 
-             AND (SELECT S1 FROM INPUT_DATA) != (SELECT S2 FROM INPUT_DATA) 
-        THEN '(보정 후: 99%)' 
-        ELSE '(보정 없음)' 
+SELECT
+    '7단계. 최종 유사도(%)',
+    TO_CHAR(ROUND((2 * match_cnt) / NULLIF(len1 + len2, 0) * 100, 2)) || '%',
+    CASE
+        WHEN (2 * match_cnt) / NULLIF(len1 + len2, 0) * 100 >= 100
+             AND (SELECT org_s1 FROM prep) <> (SELECT org_s2 FROM prep)
+        THEN '(보정 후: 99%)'
+        ELSE '(보정 없음)'
     END
-FROM FINAL_CALC;
+FROM calc;
