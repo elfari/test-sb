@@ -1,14 +1,14 @@
 WITH RAW_DATA AS (
-    -- 입력 문자열 정의
+    -- 입력 문자열 정의 (여기서만 수정)
     SELECT '갤럭시 갤럭시 S25!@#' AS target_str FROM DUAL
 ),
 STEP_1 AS (
-    -- 1단계: 영문, 숫자, 한글, 중문 제외 공백 치환
+    -- 1단계: 특수문자 제거 (영문, 숫자, 한글, 중문 제외 공백 치환)
     SELECT REGEXP_REPLACE(target_str, '[^a-zA-Z0-9가-힣一-龥]', ' ') AS clean_str
     FROM RAW_DATA
 ),
 STEP_2 AS (
-    -- 2단계: 파싱 및 중복 제거
+    -- 2단계: 파싱 및 중복 제거 후 다시 합치기
     SELECT LISTAGG(word, ' ') WITHIN GROUP (ORDER BY pos) AS final_str
     FROM (
         SELECT DISTINCT 
@@ -18,8 +18,16 @@ STEP_2 AS (
         CONNECT BY REGEXP_SUBSTR(clean_str, '[^ ]+', 1, LEVEL) IS NOT NULL
         GROUP BY REGEXP_SUBSTR(clean_str, '[^ ]+', 1, LEVEL)
     )
+),
+STEP_3 AS (
+    -- 3단계: 2단계 결과에서 공백을 제외한 문자수 계산
+    -- TO_CHAR를 사용하여 RESULT 컬럼의 데이터 타입을 일치시킵니다.
+    SELECT TO_CHAR(LENGTH(REPLACE(final_str, ' ', ''))) AS char_count
+    FROM STEP_2
 )
--- 1단계와 2단계를 각각 행으로 출력
+-- 1, 2, 3단계를 행으로 결합
 SELECT '1단계 (특수문자 제거)' AS STAGE, clean_str AS RESULT FROM STEP_1
 UNION ALL
-SELECT '2단계 (중복 단어 제거)', final_str FROM STEP_2;
+SELECT '2단계 (중복 단어 제거)', final_str FROM STEP_2
+UNION ALL
+SELECT '3단계 (공백제외 문자수)', char_count FROM STEP_3;
