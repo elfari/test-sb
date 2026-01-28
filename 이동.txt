@@ -1,83 +1,157 @@
 WITH RAW_DATA AS (
-    SELECT 'Samsung Galaxy S25' AS STR1,
-           'samsung galaxy s24 ultra' AS STR2 
+    SELECT
+        'Samsung Galaxy S25'        AS STR1,
+        'samsung galaxy s24 ultra' AS STR2
     FROM DUAL
 ),
+
 UPPER_DATA AS (
-    SELECT UPPER(STR1) AS STR1, UPPER(STR2) AS STR2 FROM RAW_DATA
+    SELECT
+        UPPER(STR1) AS STR1,
+        UPPER(STR2) AS STR2
+    FROM RAW_DATA
 ),
+
 STEP_1 AS (
-    SELECT '1단계 (원본)' AS STAGE, STR1, STR2 FROM RAW_DATA
+    -- 1단계: 원본
+    SELECT
+        '1단계 (원본)' AS STAGE,
+        STR1,
+        STR2
+    FROM RAW_DATA
 ),
+
 STEP_2 AS (
-    -- 특수문자 제거: 알파벳, 숫자, 한글/한자만 유지, 나머지 스페이스 치환
-    SELECT '2단계 (특수문자제거)' AS STAGE,
-           REGEXP_REPLACE(STR1, '[^a-zA-Z0-9가-힣一-龥]', ' ') AS STR1,
-           REGEXP_REPLACE(STR2, '[^a-zA-Z0-9가-힣一-龥]', ' ') AS STR2
+    -- 2단계: 특수문자 제거 (알파벳, 숫자, 한글/한자만 유지)
+    SELECT
+        '2단계 (특수문자제거)' AS STAGE,
+        REGEXP_REPLACE(STR1, '[^a-zA-Z0-9가-힣一-龥]', ' ') AS STR1,
+        REGEXP_REPLACE(STR2, '[^a-zA-Z0-9가-힣一-龥]', ' ') AS STR2
     FROM UPPER_DATA
 ),
+
 STEP_3_BASE AS (
-    -- 중복 단어 제거: 각 문자열을 단어로 분리, 고유 단어만 순서대로 재조합
-    SELECT 
+    -- 3단계 준비: 문자열 내부 중복 단어 제거 (등장 순서 유지)
+    SELECT
         MAX(CASE WHEN SRC = 1 THEN FINAL_STR END) AS STR1,
         MAX(CASE WHEN SRC = 2 THEN FINAL_STR END) AS STR2
     FROM (
-        SELECT SRC, LISTAGG(word, ' ') WITHIN GROUP (ORDER BY pos) AS FINAL_STR
+        SELECT
+            SRC,
+            LISTAGG(word, ' ') WITHIN GROUP (ORDER BY pos) AS FINAL_STR
         FROM (
-            -- 문자열 1: 단어 분리, 중복 시 첫 위치 pos 유지
-            SELECT 1 AS SRC, 
-                   REGEXP_SUBSTR(T.STR1, '[^ ]+', 1, LEVEL) AS word, 
-                   MIN(LEVEL) OVER(PARTITION BY REGEXP_SUBSTR(T.STR1, '[^ ]+', 1, LEVEL)) AS pos
-            FROM STEP_2 T 
+            -- 문자열 1
+            SELECT DISTINCT
+                1 AS SRC,
+                REGEXP_SUBSTR(T.STR1, '[^ ]+', 1, LEVEL) AS word,
+                MIN(LEVEL) OVER (
+                    PARTITION BY REGEXP_SUBSTR(T.STR1, '[^ ]+', 1, LEVEL)
+                ) AS pos
+            FROM STEP_2 T
             CONNECT BY LEVEL <= REGEXP_COUNT(T.STR1, '[^ ]+')
+
             UNION ALL
-            -- 문자열 2: 동일
-            SELECT 2 AS SRC, 
-                   REGEXP_SUBSTR(T.STR2, '[^ ]+', 1, LEVEL) AS word, 
-                   MIN(LEVEL) OVER(PARTITION BY REGEXP_SUBSTR(T.STR2, '[^ ]+', 1, LEVEL)) AS pos
-            FROM STEP_2 T 
+
+            -- 문자열 2
+            SELECT DISTINCT
+                2 AS SRC,
+                REGEXP_SUBSTR(T.STR2, '[^ ]+', 1, LEVEL) AS word,
+                MIN(LEVEL) OVER (
+                    PARTITION BY REGEXP_SUBSTR(T.STR2, '[^ ]+', 1, LEVEL)
+                ) AS pos
+            FROM STEP_2 T
             CONNECT BY LEVEL <= REGEXP_COUNT(T.STR2, '[^ ]+')
-        ) 
-        -- DISTINCT 대신 GROUP BY로 중복 제거 (pos가 동일한 word는 하나만)
-        GROUP BY SRC, word, pos
+        )
+        GROUP BY SRC
     )
 ),
+
 STEP_3 AS (
-    SELECT '3단계 (중복단어제거)' AS STAGE, STR1, STR2 FROM STEP_3_BASE
+    SELECT
+        '3단계 (중복단어제거)' AS STAGE,
+        STR1,
+        STR2
+    FROM STEP_3_BASE
 ),
+
 STEP_4_BASE AS (
-    SELECT LENGTH(REPLACE(STR1, ' ', '')) AS LEN1,
-           LENGTH(REPLACE(STR2, ' ', '')) AS LEN2,
-           STR1, STR2
+    -- 4단계 준비: 공백 제외 문자 수
+    SELECT
+        LENGTH(REPLACE(STR1, ' ', '')) AS LEN1,
+        LENGTH(REPLACE(STR2, ' ', '')) AS LEN2,
+        STR1,
+        STR2
     FROM STEP_3
 ),
+
 STEP_4 AS (
-    SELECT '4단계 (공백제외 문자수)' AS STAGE, TO_CHAR(LEN1) AS STR1, TO_CHAR(LEN2) AS STR2 FROM STEP_4_BASE
+    SELECT
+        '4단계 (공백제외 문자수)' AS STAGE,
+        TO_CHAR(LEN1) AS STR1,
+        TO_CHAR(LEN2) AS STR2
+    FROM STEP_4_BASE
 ),
+
 STEP_5_BASE AS (
-    -- 공통 고유 문자 추출: INTERSECT로 집합 교집합
-    SELECT COUNT(*) AS MATCH_CNT, LISTAGG(CH, ',') WITHIN GROUP (ORDER BY CH) AS MATCH_LIST
+    -- 5단계: 공통 고유 문자 추출 (INTERSECT)
+    SELECT
+        COUNT(*) AS MATCH_CNT,
+        LISTAGG(CH, ',') WITHIN GROUP (ORDER BY CH) AS MATCH_LIST
     FROM (
-        SELECT SUBSTR(REPLACE(STR1, ' ', ''), LEVEL, 1) AS CH FROM STEP_3 
+        SELECT
+            SUBSTR(REPLACE(STR1, ' ', ''), LEVEL, 1) AS CH
+        FROM STEP_3
         CONNECT BY LEVEL <= LENGTH(REPLACE(STR1, ' ', ''))
+
         INTERSECT
-        SELECT SUBSTR(REPLACE(STR2, ' ', ''), LEVEL, 1) AS CH FROM STEP_3 
+
+        SELECT
+            SUBSTR(REPLACE(STR2, ' ', ''), LEVEL, 1) AS CH
+        FROM STEP_3
         CONNECT BY LEVEL <= LENGTH(REPLACE(STR2, ' ', ''))
     )
 ),
+
 STEP_5 AS (
-    SELECT '5단계 (일치 문자수)' AS STAGE, TO_CHAR(MATCH_CNT) AS STR1, '공통문자: ' || MATCH_LIST AS STR2 FROM STEP_5_BASE
+    SELECT
+        '5단계 (일치 문자수)' AS STAGE,
+        TO_CHAR(MATCH_CNT) AS STR1,
+        '공통문자: ' || MATCH_LIST AS STR2
+    FROM STEP_5_BASE
 ),
+
 STEP_6 AS (
-    -- 유사도 계산: Dice 계수 (2 * 공통 / 총 길이)
-    SELECT '6단계 (유사도 점수)' AS STAGE,
-           TO_CHAR(ROUND((B5.MATCH_CNT * 2) / NULLIF(B4.LEN1 + B4.LEN2, 0), 2)) AS STR1,
-           '일치율: ' || TO_CHAR(ROUND(((B5.MATCH_CNT * 2) / NULLIF(B4.LEN1 + B4.LEN2, 0)) * 100, 1)) || '%' AS STR2
-    FROM STEP_4_BASE B4, STEP_5_BASE B5
+    -- 6단계: Dice 계수 기반 유사도 계산
+    SELECT
+        '6단계 (유사도 점수)' AS STAGE,
+        TO_CHAR(
+            ROUND(
+                (B5.MATCH_CNT * 2)
+                / NULLIF(B4.LEN1 + B4.LEN2, 0),
+                2
+            )
+        ) AS STR1,
+        '일치율: '
+        || TO_CHAR(
+            ROUND(
+                ((B5.MATCH_CNT * 2)
+                / NULLIF(B4.LEN1 + B4.LEN2, 0)) * 100,
+                1
+            )
+        )
+        || '%' AS STR2
+    FROM STEP_4_BASE B4,
+         STEP_5_BASE B5
 )
-SELECT * FROM STEP_1 UNION ALL 
-SELECT * FROM STEP_2 UNION ALL 
-SELECT * FROM STEP_3 UNION ALL 
-SELECT * FROM STEP_4 UNION ALL 
-SELECT * FROM STEP_5 UNION ALL 
+
+SELECT * FROM STEP_1
+UNION ALL
+SELECT * FROM STEP_2
+UNION ALL
+SELECT * FROM STEP_3
+UNION ALL
+SELECT * FROM STEP_4
+UNION ALL
+SELECT * FROM STEP_5
+UNION ALL
 SELECT * FROM STEP_6;
