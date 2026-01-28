@@ -75,19 +75,28 @@ CHAR_COUNTS AS (
     WHERE CH IS NOT NULL
     GROUP BY CH
 ),
--- [6] 최종 통계 산출 (여기가 수정됨: 안전하게 분리 후 조인)
+-- [6-New] 일치하는 문자 리스트 생성 (문자열1 등장 순서로 정렬)
+MATCH_LIST_GEN AS (
+    SELECT 
+        LISTAGG(EXPANDED_CH, ',') WITHIN GROUP (ORDER BY INSTR((SELECT FIN_S1 FROM STEP4_FINAL_STR), EXPANDED_CH)) AS MATCH_STR
+    FROM (
+        SELECT A.CH AS EXPANDED_CH
+        FROM CHAR_COUNTS A,
+             (SELECT LEVEL LVL FROM DUAL CONNECT BY LEVEL <= 200) B -- 글자 반복을 위한 더미
+        WHERE B.LVL <= LEAST(A.CNT1, A.CNT2) -- 공통 개수만큼 로우 복제
+    )
+),
+-- [7] 최종 통계 산출
 FINAL_CALC AS (
     SELECT 
         A.LEN1,
         A.LEN2,
         B.MATCH_CNT
     FROM 
-        -- 길이 구하는 테이블 (무조건 1행 반환)
         (SELECT NVL(LENGTH(FIN_S1),0) AS LEN1, NVL(LENGTH(FIN_S2),0) AS LEN2 FROM STEP4_FINAL_STR) A,
-        -- 합계 구하는 테이블 (무조건 1행 반환)
         (SELECT NVL(SUM(LEAST(CNT1, CNT2)),0) AS MATCH_CNT FROM CHAR_COUNTS) B
 )
--- [7] 결과 출력
+-- [8] 결과 출력
 SELECT 
     '1단계. 원본' AS 단계, S1 AS 문자열1, S2 AS 문자열2 FROM INPUT_DATA
 UNION ALL
@@ -104,10 +113,16 @@ SELECT
     '5단계. 공백제외 문자수', TO_CHAR(LEN1), TO_CHAR(LEN2) FROM FINAL_CALC
 UNION ALL
 SELECT 
-    '6단계. 일치 문자수', TO_CHAR(MATCH_CNT), TO_CHAR(MATCH_CNT) FROM FINAL_CALC
+    '6단계. 일치하는 문자', 
+    (SELECT MATCH_STR FROM MATCH_LIST_GEN), 
+    (SELECT MATCH_STR FROM MATCH_LIST_GEN) 
+FROM DUAL
 UNION ALL
 SELECT 
-    '7단계. 최종 유사도(%)', 
+    '7단계. 일치 문자수', TO_CHAR(MATCH_CNT), TO_CHAR(MATCH_CNT) FROM FINAL_CALC
+UNION ALL
+SELECT 
+    '8단계. 최종 유사도(%)', 
     TO_CHAR(ROUND((2 * MATCH_CNT) / NULLIF((LEN1 + LEN2),0) * 100, 2)) || '%', 
     CASE 
         WHEN (LEN1 + LEN2) = 0 THEN '(비교 불가)'
