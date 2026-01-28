@@ -1,159 +1,97 @@
-CREATE OR REPLACE FUNCTION FN_GET_SIM_PCT(
-    P_STR1 IN VARCHAR2,
-    P_STR2 IN VARCHAR2
-) RETURN NUMBER
-IS
-/******************************************************************************
-   [함수명] FN_GET_SIM_PCT (String Similarity Percentage)
-   [작성일] 2026. 01. 28
-   [설  명] 두 문자열의 구성 요소 유사도를 0~100 퍼센트로 반환
-
-   [핵심 로직 흐름]
-   1. 원본 완전 일치 (100점):
-      - 띄어쓰기, 대소문자, 특수문자까지 완벽히 같으면 즉시 100 반환.
-   
-   2. 전처리 (Preprocessing):
-      - 대소문자 통일 (UPPER).
-      - 유효 문자(영문,숫자,한글,한자)를 제외한 모든 특수문자 제거.
-      - 공백 기준 '토큰(단어)' 분리 후 중복된 토큰 제거 (예: '갤 갤 S24' -> '갤 S24').
-
-   3. 글자 단위 직접 비교 (Direct Character Counting):
-      - 순서가 뒤섞여도 구성 글자가 같으면 점수를 인정함.
-      - 편집 거리(Edit Distance) 알고리즘이 아닌, 포함된 글자 개수(Bag of Characters) 방식.
-
-   4. **[중요] 글자 수 카운트 기준**:
-      - 유사도 계산 시 분모(전체 길이)와 분자(일치 수)는 **"공백(Space)을 제외한 글자"**만 카운트함.
-
-   5. 99점 보정 (The 99% Rule):
-      - 계산상으로는 100점이더라도, 1번(원본 일치)을 통과하지 못했다면
-        (순서 다름, 대소문자 차이, 중복 차이 등) 99점으로 강등 처리.
-******************************************************************************/
-
-    -- [변수 선언] ORA-06502(버퍼 초과) 방지를 위해 최대 크기 할당
-    V_PROC_STR1  VARCHAR2(32767); -- 전처리(토큰정리) 완료된 문자열 1
-    V_PROC_STR2  VARCHAR2(32767); -- 전처리(토큰정리) 완료된 문자열 2
-    
-    V_FINAL_STR1 VARCHAR2(32767); -- 공백까지 제거된 최종 비교용 1
-    V_FINAL_STR2 VARCHAR2(32767); -- 공백까지 제거된 최종 비교용 2 (삭제하며 비교)
-    
-    V_LEN1       NUMBER;          -- 문자열 1 길이 (공백 제외)
-    V_LEN2       NUMBER;          -- 문자열 2 길이 (공백 제외)
-    
-    V_MATCH_CNT  NUMBER := 0;     -- 일치하는 글자 수 누적
-    V_CHAR       VARCHAR2(10);    -- 비교할 한 글자 (한글 3byte 고려 넉넉히)
-    V_POS        NUMBER;          -- 찾은 위치 인덱스
-    V_RESULT     NUMBER;          -- 최종 결과 점수
-
-    ---------------------------------------------------------------------------
-    -- [내부 함수] FN_PREPROCESS
-    -- 역할: 대문자 변환 + 특수문자 치환 + 중복 토큰(단어) 제거
-    ---------------------------------------------------------------------------
-    FUNCTION FN_PREPROCESS(P_VAL IN VARCHAR2) RETURN VARCHAR2
-    IS
-        V_CLEANED    VARCHAR2(32767);
-        V_TOKEN      VARCHAR2(4000);
-        V_RESULT_STR VARCHAR2(32767) := '';
-        
-        -- 중복 토큰 확인용 맵 (Key: 단어, Value: 존재여부)
-        TYPE T_TOKEN_MAP IS TABLE OF BOOLEAN INDEX BY VARCHAR2(4000);
-        V_MAP T_TOKEN_MAP;
-        
-        V_IDX NUMBER := 1;
-    BEGIN
-        IF P_VAL IS NULL THEN RETURN NULL; END IF;
-        
-        -- 1. 대문자 변환 & 허용 문자 외 공백 치환
-        -- [^A-Z0-9가-힣一-龥] : 영대문자, 숫자, 한글, 한자 외에는 모두 공백 처리
-        V_CLEANED := REGEXP_REPLACE(UPPER(P_VAL), '[^A-Z0-9가-힣一-龥]', ' ');
-        
-        -- 2. 토큰 분리 및 중복 제거 루프
-        LOOP
-            -- 공백이 아닌 연속된 문자열(토큰) 추출
-            V_TOKEN := REGEXP_SUBSTR(V_CLEANED, '[^ ]+', 1, V_IDX);
-            EXIT WHEN V_TOKEN IS NULL;
-            
-            -- 이전에 나온 적 없는 새로운 토큰만 결과에 추가
-            IF NOT V_MAP.EXISTS(V_TOKEN) THEN
-                V_MAP(V_TOKEN) := TRUE;
-                V_RESULT_STR := V_RESULT_STR || V_TOKEN || ' ';
-            END IF;
-            
-            V_IDX := V_IDX + 1;
-        END LOOP;
-        
-        RETURN TRIM(V_RESULT_STR);
-    END;
-    ---------------------------------------------------------------------------
-
-BEGIN
-    -- [Step 0] NULL 체크 (비교 대상 없으면 0점)
-    IF P_STR1 IS NULL OR P_STR2 IS NULL THEN 
-        RETURN 0; 
-    END IF;
-
-    -- [Step 1] 원본 완전 일치 (최우선)
-    -- 전처리 없이 원본이 완벽히 같으면 즉시 100점 리턴
-    IF P_STR1 = P_STR2 THEN 
-        RETURN 100; 
-    END IF;
-
-    -- [Step 2] 전처리 수행
-    V_PROC_STR1 := FN_PREPROCESS(P_STR1);
-    V_PROC_STR2 := FN_PREPROCESS(P_STR2);
-
-    -- 전처리 후 남은 글자가 없으면(특수문자만 있었던 경우 등) 0점
-    IF V_PROC_STR1 IS NULL OR V_PROC_STR2 IS NULL THEN 
-        RETURN 0; 
-    END IF;
-
-    -- [Step 3] 공백 제거 (글자 단위 카운팅 준비)
-    -- **여기서부터 글자 수 카운트는 공백을 제외합니다**
-    V_FINAL_STR1 := REPLACE(V_PROC_STR1, ' ', '');
-    V_FINAL_STR2 := REPLACE(V_PROC_STR2, ' ', '');
-    
-    -- [Step 4] 길이 계산
-    V_LEN1 := LENGTH(V_FINAL_STR1);
-    V_LEN2 := LENGTH(V_FINAL_STR2);
-    
-    IF (V_LEN1 + V_LEN2) = 0 THEN 
-        RETURN 0; 
-    END IF;
-
-    -- [Step 5] 글자 단위 직접 비교 (Direct Matching)
-    -- 문자열1의 글자를 하나씩 꺼내 문자열2에 존재하는지 확인
-    FOR i IN 1..V_LEN1 LOOP
-        V_CHAR := SUBSTR(V_FINAL_STR1, i, 1);
-        
-        -- 문자열2에서 해당 글자 위치 탐색
-        V_POS := INSTR(V_FINAL_STR2, V_CHAR);
-        
-        IF V_POS > 0 THEN
-            -- 찾았으면 카운트 +1
-            V_MATCH_CNT := V_MATCH_CNT + 1;
-            
-            -- [중복 매칭 방지]
-            -- 이미 매칭된 글자는 문자열2에서 제거 (예: 'AA' vs 'AB' -> A 하나만 매칭)
-            V_FINAL_STR2 := SUBSTR(V_FINAL_STR2, 1, V_POS - 1) || SUBSTR(V_FINAL_STR2, V_POS + 1);
-        END IF;
-    END LOOP;
-
-    -- [Step 6] 결과 산출
-    -- 공식: (2 * 일치글자수) / (전체글자수 합) * 100
-    V_RESULT := (2 * V_MATCH_CNT) / (V_LEN1 + V_LEN2) * 100;
-
-    -- [Step 7] 99점 보정 (The 99% Rule)
-    -- 계산 결과가 100점이라도, Step 1(원본 완전 일치)을 통과 못했으므로 99점 처리
-    -- (대소문자 차이, 순서 바뀜, 특수문자 유무 등이 이 케이스에 해당)
-    IF V_RESULT >= 100 THEN
-        RETURN 99;
-    END IF;
-
-    -- 소수점 2자리 반올림하여 반환
-    RETURN ROUND(V_RESULT, 2);
-
-EXCEPTION
-    WHEN OTHERS THEN
-        -- 예기치 못한 런타임 에러 시 0 반환
-        RETURN 0;
-END;
-/
+WITH 
+-- [0] 입력 데이터 정의 (여기에 원하시는 문자열을 넣으세요)
+INPUT_DATA AS (
+    SELECT 
+        '5PART PIVOT CHAMFER;5MM-GE01-SD1-L0W6H26.13;' AS S1,
+        'Centrifugal Pump;Flowrate : 2.5 ~ 8.5m_3h, Flowrate : 0.8 ~ 2.7m_3/h;.' AS S2
+    FROM DUAL
+),
+-- [1] 특수문자 제거 및 대문자 변환 (정규식)
+STEP1_PREP AS (
+    SELECT 
+        S1 AS ORG_S1, S2 AS ORG_S2,
+        REGEXP_REPLACE(UPPER(S1), '[^A-Z0-9가-힣一-龥]', ' ') AS PREP_S1,
+        REGEXP_REPLACE(UPPER(S2), '[^A-Z0-9가-힣一-龥]', ' ') AS PREP_S2
+    FROM INPUT_DATA
+),
+-- [2] 토큰(단어) 단위 분리 (Row Generator)
+STEP2_TOKENS AS (
+    -- S1 토큰 분리
+    SELECT 'S1' AS TYPE, TRIM(REGEXP_SUBSTR(PREP_S1, '[^ ]+', 1, LEVEL)) AS TOKEN
+    FROM STEP1_PREP CONNECT BY REGEXP_SUBSTR(PREP_S1, '[^ ]+', 1, LEVEL) IS NOT NULL
+    UNION ALL
+    -- S2 토큰 분리
+    SELECT 'S2' AS TYPE, TRIM(REGEXP_SUBSTR(PREP_S2, '[^ ]+', 1, LEVEL)) AS TOKEN
+    FROM STEP1_PREP CONNECT BY REGEXP_SUBSTR(PREP_S2, '[^ ]+', 1, LEVEL) IS NOT NULL
+),
+-- [3] 중복 토큰 제거 후 다시 합치기 (LISTAGG)
+STEP3_UNIQUE AS (
+    SELECT 
+        (SELECT LISTAGG(TOKEN, ' ') WITHIN GROUP (ORDER BY TOKEN) 
+         FROM (SELECT DISTINCT TOKEN FROM STEP2_TOKENS WHERE TYPE = 'S1')) AS UNIQ_S1,
+        (SELECT LISTAGG(TOKEN, ' ') WITHIN GROUP (ORDER BY TOKEN) 
+         FROM (SELECT DISTINCT TOKEN FROM STEP2_TOKENS WHERE TYPE = 'S2')) AS UNIQ_S2
+    FROM DUAL
+),
+-- [4] 공백 제거 (최종 비교 문자열 생성)
+STEP4_FINAL_STR AS (
+    SELECT 
+        UNIQ_S1, UNIQ_S2,
+        REPLACE(UNIQ_S1, ' ', '') AS FIN_S1,
+        REPLACE(UNIQ_S2, ' ', '') AS FIN_S2
+    FROM STEP3_UNIQUE
+),
+-- [5] 글자 단위 분해 및 빈도수 계산 (Bag of Characters)
+STEP5_CHARS AS (
+    SELECT 'S1' AS TYPE, SUBSTR(FIN_S1, LEVEL, 1) AS CH 
+    FROM STEP4_FINAL_STR CONNECT BY LEVEL <= LENGTH(FIN_S1)
+    UNION ALL
+    SELECT 'S2' AS TYPE, SUBSTR(FIN_S2, LEVEL, 1) AS CH 
+    FROM STEP4_FINAL_STR CONNECT BY LEVEL <= LENGTH(FIN_S2)
+),
+CHAR_COUNTS AS (
+    SELECT CH,
+           COUNT(CASE WHEN TYPE='S1' THEN 1 END) AS CNT1,
+           COUNT(CASE WHEN TYPE='S2' THEN 1 END) AS CNT2
+    FROM STEP5_CHARS
+    GROUP BY CH
+),
+-- [6] 최종 통계 산출
+FINAL_CALC AS (
+    SELECT 
+        (SELECT LENGTH(FIN_S1) FROM STEP4_FINAL_STR) AS LEN1,
+        (SELECT LENGTH(FIN_S2) FROM STEP4_FINAL_STR) AS LEN2,
+        -- 교집합 개수: 두 문자열 중 적게 가지고 있는 쪽의 개수를 합산 (MIN 로직)
+        SUM(LEAST(CNT1, CNT2)) AS MATCH_CNT
+    FROM CHAR_COUNTS
+)
+-- [7] 결과 출력 (Unpivot 형태로 보기 좋게 정렬)
+SELECT 
+    '1단계. 원본' AS 단계, S1 AS 문자열1, S2 AS 문자열2 FROM INPUT_DATA
+UNION ALL
+SELECT 
+    '2단계. 특수문자제거', PREP_S1, PREP_S2 FROM STEP1_PREP
+UNION ALL
+SELECT 
+    '3단계. 중복단어제거', UNIQ_S1, UNIQ_S2 FROM STEP3_UNIQUE
+UNION ALL
+SELECT 
+    '4단계. 공백제외 문자열', FIN_S1, FIN_S2 FROM STEP4_FINAL_STR
+UNION ALL
+SELECT 
+    '5단계. 공백제외 문자수', TO_CHAR(LEN1), TO_CHAR(LEN2) FROM FINAL_CALC
+UNION ALL
+SELECT 
+    '6단계. 일치 문자수', TO_CHAR(MATCH_CNT), TO_CHAR(MATCH_CNT) FROM FINAL_CALC
+UNION ALL
+SELECT 
+    '7단계. 최종 유사도(%)', 
+    TO_CHAR(ROUND((2 * MATCH_CNT) / (LEN1 + LEN2) * 100, 2)) || '%', 
+    CASE 
+        -- 99점 룰 체크: 점수가 100점인데 원본이 다르면 99점 표기
+        WHEN (2 * MATCH_CNT) / (LEN1 + LEN2) * 100 >= 100 
+             AND (SELECT S1 FROM INPUT_DATA) != (SELECT S2 FROM INPUT_DATA) 
+        THEN '(보정 후: 99%)' 
+        ELSE '(보정 없음)' 
+    END
+FROM FINAL_CALC;
