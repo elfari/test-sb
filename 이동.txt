@@ -1,134 +1,135 @@
-WITH 
--- [0] 입력 데이터 정의
-INPUT_DATA AS (
-    SELECT 
-        '5PART PIVOT CHAMFER;5MM-GE01-SD1-L0W6H26.13;' AS S1,
-        'Centrifugal Pump;Flowrate : 2.5 ~ 8.5m_3h, Flowrate : 0.8 ~ 2.7m_3/h;.' AS S2
-    FROM DUAL
-),
--- [1] 특수문자 제거 및 대문자 변환
-STEP1_PREP AS (
-    SELECT 
-        S1 AS ORG_S1, S2 AS ORG_S2,
-        REGEXP_REPLACE(UPPER(S1), '[^A-Z0-9가-힣一-龥]', ' ') AS PREP_S1,
-        REGEXP_REPLACE(UPPER(S2), '[^A-Z0-9가-힣一-龥]', ' ') AS PREP_S2
-    FROM INPUT_DATA
-),
--- [2] 토큰(단어) 단위 분리
-STEP2_TOKENS AS (
-    SELECT 'S1' AS TYPE,
-           TRIM(REGEXP_SUBSTR(PREP_S1, '[^ ]+', 1, LEVEL)) AS TOKEN,
-           LEVEL AS POS
-    FROM STEP1_PREP
-    CONNECT BY LEVEL <= NVL(REGEXP_COUNT(PREP_S1, '[^ ]+'), 0)
-    UNION ALL
-    SELECT 'S2' AS TYPE,
-           TRIM(REGEXP_SUBSTR(PREP_S2, '[^ ]+', 1, LEVEL)) AS TOKEN,
-           LEVEL AS POS
-    FROM STEP1_PREP
-    CONNECT BY LEVEL <= NVL(REGEXP_COUNT(PREP_S2, '[^ ]+'), 0)
-),
--- [3] 중복 토큰 제거
-STEP3_UNIQUE AS (
-    SELECT 
-        (SELECT LISTAGG(TOKEN, ' ') WITHIN GROUP (ORDER BY MIN_POS)
-         FROM (
-             SELECT TOKEN, MIN(POS) AS MIN_POS
-             FROM STEP2_TOKENS
-             WHERE TYPE = 'S1'
-             GROUP BY TOKEN
-         )
-        ) AS UNIQ_S1,
-        (SELECT LISTAGG(TOKEN, ' ') WITHIN GROUP (ORDER BY MIN_POS)
-         FROM (
-             SELECT TOKEN, MIN(POS) AS MIN_POS
-             FROM STEP2_TOKENS
-             WHERE TYPE = 'S2'
-             GROUP BY TOKEN
-         )
-        ) AS UNIQ_S2
-    FROM DUAL
-),
--- [4] 공백 제거 (최종 비교 문자열)
-STEP4_FINAL_STR AS (
-    SELECT 
-        UNIQ_S1, UNIQ_S2,
-        REPLACE(NVL(UNIQ_S1,''), ' ', '') AS FIN_S1,
-        REPLACE(NVL(UNIQ_S2,''), ' ', '') AS FIN_S2
-    FROM STEP3_UNIQUE
-),
--- [5] 글자 단위 분해 및 빈도수 계산
-STEP5_CHARS AS (
-    SELECT 'S1' AS TYPE, SUBSTR(FIN_S1, LEVEL, 1) AS CH
-    FROM STEP4_FINAL_STR
-    CONNECT BY LEVEL <= NVL(LENGTH(FIN_S1),0)
-    UNION ALL
-    SELECT 'S2' AS TYPE, SUBSTR(FIN_S2, LEVEL, 1) AS CH
-    FROM STEP4_FINAL_STR
-    CONNECT BY LEVEL <= NVL(LENGTH(FIN_S2),0)
-),
-CHAR_COUNTS AS (
-    SELECT CH,
-           COUNT(CASE WHEN TYPE='S1' THEN 1 END) AS CNT1,
-           COUNT(CASE WHEN TYPE='S2' THEN 1 END) AS CNT2
-    FROM STEP5_CHARS
-    WHERE CH IS NOT NULL
-    GROUP BY CH
-),
--- [6-New] 일치하는 문자 리스트 생성 (문자열1 등장 순서로 정렬)
-MATCH_LIST_GEN AS (
-    SELECT 
-        LISTAGG(EXPANDED_CH, ',') WITHIN GROUP (ORDER BY INSTR((SELECT FIN_S1 FROM STEP4_FINAL_STR), EXPANDED_CH)) AS MATCH_STR
-    FROM (
-        SELECT A.CH AS EXPANDED_CH
-        FROM CHAR_COUNTS A,
-             (SELECT LEVEL LVL FROM DUAL CONNECT BY LEVEL <= 200) B -- 글자 반복을 위한 더미
-        WHERE B.LVL <= LEAST(A.CNT1, A.CNT2) -- 공통 개수만큼 로우 복제
-    )
-),
--- [7] 최종 통계 산출
-FINAL_CALC AS (
-    SELECT 
-        A.LEN1,
-        A.LEN2,
-        B.MATCH_CNT
-    FROM 
-        (SELECT NVL(LENGTH(FIN_S1),0) AS LEN1, NVL(LENGTH(FIN_S2),0) AS LEN2 FROM STEP4_FINAL_STR) A,
-        (SELECT NVL(SUM(LEAST(CNT1, CNT2)),0) AS MATCH_CNT FROM CHAR_COUNTS) B
-)
--- [8] 결과 출력
-SELECT 
-    '1단계. 원본' AS 단계, S1 AS 문자열1, S2 AS 문자열2 FROM INPUT_DATA
-UNION ALL
-SELECT 
-    '2단계. 특수문자제거', PREP_S1, PREP_S2 FROM STEP1_PREP
-UNION ALL
-SELECT 
-    '3단계. 중복단어제거', UNIQ_S1, UNIQ_S2 FROM STEP3_UNIQUE
-UNION ALL
-SELECT 
-    '4단계. 공백제외 문자열', FIN_S1, FIN_S2 FROM STEP4_FINAL_STR
-UNION ALL
-SELECT 
-    '5단계. 공백제외 문자수', TO_CHAR(LEN1), TO_CHAR(LEN2) FROM FINAL_CALC
-UNION ALL
-SELECT 
-    '6단계. 일치하는 문자', 
-    (SELECT MATCH_STR FROM MATCH_LIST_GEN), 
-    (SELECT MATCH_STR FROM MATCH_LIST_GEN) 
-FROM DUAL
-UNION ALL
-SELECT 
-    '7단계. 일치 문자수', TO_CHAR(MATCH_CNT), TO_CHAR(MATCH_CNT) FROM FINAL_CALC
-UNION ALL
-SELECT 
-    '8단계. 최종 유사도(%)', 
-    TO_CHAR(ROUND((2 * MATCH_CNT) / NULLIF((LEN1 + LEN2),0) * 100, 2)) || '%', 
-    CASE 
-        WHEN (LEN1 + LEN2) = 0 THEN '(비교 불가)'
-        WHEN (2 * MATCH_CNT) / (LEN1 + LEN2) * 100 >= 100 
-             AND (SELECT S1 FROM INPUT_DATA) != (SELECT S2 FROM INPUT_DATA) 
-        THEN '(보정 후: 99%)' 
-        ELSE '(보정 없음)' 
-    END
-FROM FINAL_CALC;
+CREATE OR REPLACE FUNCTION FN_GET_SIM_PCT(
+    P_STR1 IN VARCHAR2,
+    P_STR2 IN VARCHAR2
+) RETURN NUMBER
+IS
+/******************************************************************************
+   [함수명] FN_GET_SIM_PCT (String Similarity Percentage)
+   [수정일] 2026. 01. 29
+   [설  명] 두 문자열의 구성 요소 유사도를 0~100 퍼센트로 반환
+
+   [수정 사항]
+   - 특수문자만 있는 경우(예: ';;') 100%가 나오는 버그 수정.
+   - 로직 순서 변경: 전처리(특수문자 제거) -> 유효성 체크 -> 원본 비교 순으로 변경.
+
+   [로직 흐름]
+   1. 전처리 (Preprocessing):
+      - 대문자 변환, 특수문자 제거, 중복 토큰 제거.
+   2. 유효성 체크 (Validation):
+      - 전처리 후 남은 글자가 없으면(빈값) 무조건 0점 반환.
+   3. 원본 완전 일치 (Exact Match):
+      - 유효한 문자열이 있으면서 원본이 같으면 100점.
+   4. 글자 단위 직접 비교 & 99점 보정 룰 적용.
+******************************************************************************/
+
+    V_PROC_STR1  VARCHAR2(32767);
+    V_PROC_STR2  VARCHAR2(32767);
+    
+    V_FINAL_STR1 VARCHAR2(32767);
+    V_FINAL_STR2 VARCHAR2(32767);
+    
+    V_LEN1       NUMBER;
+    V_LEN2       NUMBER;
+    
+    V_MATCH_CNT  NUMBER := 0;
+    V_CHAR       VARCHAR2(10);
+    V_POS        NUMBER;
+    V_RESULT     NUMBER;
+
+    ---------------------------------------------------------------------------
+    -- [내부 함수] FN_PREPROCESS
+    ---------------------------------------------------------------------------
+    FUNCTION FN_PREPROCESS(P_VAL IN VARCHAR2) RETURN VARCHAR2
+    IS
+        V_CLEANED    VARCHAR2(32767);
+        V_TOKEN      VARCHAR2(4000);
+        V_RESULT_STR VARCHAR2(32767) := '';
+        
+        TYPE T_TOKEN_MAP IS TABLE OF BOOLEAN INDEX BY VARCHAR2(4000);
+        V_MAP T_TOKEN_MAP;
+        V_IDX NUMBER := 1;
+    BEGIN
+        IF P_VAL IS NULL THEN RETURN NULL; END IF;
+        
+        -- 허용 문자(영/수/한/한자) 외에는 공백으로 치환
+        V_CLEANED := REGEXP_REPLACE(UPPER(P_VAL), '[^A-Z0-9가-힣一-龥]', ' ');
+        
+        LOOP
+            V_TOKEN := REGEXP_SUBSTR(V_CLEANED, '[^ ]+', 1, V_IDX);
+            EXIT WHEN V_TOKEN IS NULL;
+            
+            IF NOT V_MAP.EXISTS(V_TOKEN) THEN
+                V_MAP(V_TOKEN) := TRUE;
+                V_RESULT_STR := V_RESULT_STR || V_TOKEN || ' ';
+            END IF;
+            V_IDX := V_IDX + 1;
+        END LOOP;
+        
+        RETURN TRIM(V_RESULT_STR);
+    END;
+    ---------------------------------------------------------------------------
+
+BEGIN
+    -- [Step 0] NULL 체크
+    IF P_STR1 IS NULL OR P_STR2 IS NULL THEN 
+        RETURN 0; 
+    END IF;
+
+    -- [Step 1] 전처리 먼저 수행 (순서 변경됨!)
+    -- 특수문자를 먼저 다 지워보고 남는 게 있는지 확인해야 함
+    V_PROC_STR1 := FN_PREPROCESS(P_STR1);
+    V_PROC_STR2 := FN_PREPROCESS(P_STR2);
+
+    -- [Step 2] 유효성 체크 (핵심 수정)
+    -- ';;' -> 전처리 후 NULL -> 여기서 0점 반환됨
+    IF V_PROC_STR1 IS NULL OR V_PROC_STR2 IS NULL THEN 
+        RETURN 0; 
+    END IF;
+
+    -- [Step 3] 원본 완전 일치 확인
+    -- 전처리 결과가 존재한다는 것을 확인했으므로, 이제 원본 일치를 따짐
+    -- (ABC vs ABC 같은 경우 여기서 100점)
+    IF P_STR1 = P_STR2 THEN 
+        RETURN 100; 
+    END IF;
+
+    -- [Step 4] 공백 제거 (글자 단위 카운팅 준비)
+    V_FINAL_STR1 := REPLACE(V_PROC_STR1, ' ', '');
+    V_FINAL_STR2 := REPLACE(V_PROC_STR2, ' ', '');
+    
+    -- [Step 5] 길이 계산
+    V_LEN1 := LENGTH(V_FINAL_STR1);
+    V_LEN2 := LENGTH(V_FINAL_STR2);
+    
+    IF (V_LEN1 + V_LEN2) = 0 THEN 
+        RETURN 0; 
+    END IF;
+
+    -- [Step 6] 글자 단위 직접 비교
+    FOR i IN 1..V_LEN1 LOOP
+        V_CHAR := SUBSTR(V_FINAL_STR1, i, 1);
+        V_POS := INSTR(V_FINAL_STR2, V_CHAR);
+        
+        IF V_POS > 0 THEN
+            V_MATCH_CNT := V_MATCH_CNT + 1;
+            V_FINAL_STR2 := SUBSTR(V_FINAL_STR2, 1, V_POS - 1) || SUBSTR(V_FINAL_STR2, V_POS + 1);
+        END IF;
+    END LOOP;
+
+    -- [Step 7] 결과 산출
+    V_RESULT := (2 * V_MATCH_CNT) / (V_LEN1 + V_LEN2) * 100;
+
+    -- [Step 8] 99점 보정
+    -- 계산상 100점이지만 원본이 다른 경우 (대소문자, 특수문자 차이 등)
+    -- 주의: ';;'는 Step 2에서 이미 0점으로 걸러졌으므로 여기 올 일 없음
+    IF V_RESULT >= 100 THEN
+        RETURN 99;
+    END IF;
+
+    RETURN ROUND(V_RESULT, 2);
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN 0;
+END;
+/
